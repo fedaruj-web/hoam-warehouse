@@ -8,6 +8,8 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const email = String(body?.email ?? "").trim().toLowerCase();
   const password = String(body?.password ?? "");
+  const ipAddress = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? request.headers.get("x-real-ip") ?? null;
+  const userAgent = request.headers.get("user-agent") ?? null;
 
   if (!email || !password) {
     return NextResponse.json({ error: "Informe e-mail e senha." }, { status: 400 });
@@ -42,6 +44,8 @@ export async function POST(request: Request) {
       action: "LOGIN_FAILED",
       entityType: "User",
       entityId: email,
+      ipAddress,
+      after: { email, userAgent },
     });
     return NextResponse.json({ error: "Credenciais inválidas." }, { status: 401 });
   }
@@ -50,6 +54,8 @@ export async function POST(request: Request) {
     data: {
       userId: user.id,
       tokenHash: hashToken(token),
+      ipAddress,
+      userAgent,
       expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 8),
     },
   });
@@ -58,6 +64,8 @@ export async function POST(request: Request) {
     entityType: "User",
     entityId: user.id,
     userId: user.id,
+    ipAddress,
+    after: { email: user.email, userAgent },
   });
 
   const response = NextResponse.json({ user: mapUser(user) });
@@ -69,4 +77,3 @@ export async function POST(request: Request) {
   });
   return response;
 }
-

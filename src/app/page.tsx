@@ -1213,8 +1213,8 @@ export default function Home() {
             <h2>Acesse sua conta</h2>
             <p className="muted">Entre com suas credenciais corporativas.</p>
             {notice && <div className="notice login-notice"><span>{notice}</span></div>}
-            <Field label="E-mail corporativo" name="email" value={currentUser.email} />
-            <Field label="Senha" name="senha" value="warehouse" type="password" />
+            <Field label="E-mail corporativo" name="email" type="email" />
+            <Field label="Senha" name="senha" type="password" />
             <button className="btn gold">Entrar no ambiente seguro</button>
           </form>
         </section>

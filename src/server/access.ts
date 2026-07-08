@@ -17,6 +17,7 @@ type PrismaUser = {
   email: string;
   status: string;
   permissionGroup?: { code: string } | null;
+  sessions?: { createdAt: Date }[];
 };
 
 const actionToUi: Record<string, PermissionAction> = {
@@ -59,12 +60,20 @@ export function mapAccessGroup(group: PrismaGroup): AccessGroup {
 }
 
 export function mapAppUser(user: PrismaUser): AppUser {
+  const lastSession = user.sessions?.[0]?.createdAt;
   return {
     id: user.id,
     name: user.name,
     email: user.email,
     groupId: user.permissionGroup?.code ?? "consulta",
     status: user.status === "ACTIVE" ? "Ativo" : user.status === "BLOCKED" ? "Bloqueado" : "Convite pendente",
-    lastAccess: "Nunca",
+    lastAccess: lastSession
+      ? lastSession.toLocaleString("pt-BR", {
+          day: "2-digit",
+          month: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "Nunca",
   };
 }

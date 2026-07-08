@@ -34,7 +34,14 @@ export async function GET() {
 
   const users = await db.user.findMany({
     where: { deletedAt: null },
-    include: { permissionGroup: { select: { code: true } } },
+    include: {
+      permissionGroup: { select: { code: true } },
+      sessions: {
+        orderBy: { createdAt: "desc" },
+        select: { createdAt: true },
+        take: 1,
+      },
+    },
     orderBy: { name: "asc" },
   });
   return NextResponse.json(users.map(mapAppUser));

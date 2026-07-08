@@ -7,6 +7,7 @@ type AuditPayload = {
   userId?: string | null;
   before?: unknown;
   after?: unknown;
+  ipAddress?: string | null;
 };
 
 export async function writeAudit(db: PrismaClient | Prisma.TransactionClient | null, payload: AuditPayload) {
@@ -20,6 +21,7 @@ export async function writeAudit(db: PrismaClient | Prisma.TransactionClient | n
       userId: payload.userId ?? null,
       before: payload.before === undefined ? undefined : JSON.parse(JSON.stringify(payload.before)),
       after: payload.after === undefined ? undefined : JSON.parse(JSON.stringify(payload.after)),
+      ipAddress: payload.ipAddress ?? null,
     },
   });
 }
