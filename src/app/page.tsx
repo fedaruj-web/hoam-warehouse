@@ -1481,6 +1481,12 @@ function Logo() {
 function assignorDetailRows(item: Assignor): [string, string][] {
   const procurador = item.procuradores?.[0];
   const beneficiario = item.beneficiariosFinais?.[0];
+  const procuradorText = procurador
+    ? `${procurador.nome || "Nome não informado"} · ${procurador.cargo || "Cargo não informado"} · ${procurador.poderes || "Poderes não informados"}`
+    : "Não cadastrado";
+  const beneficiarioText = beneficiario
+    ? `${beneficiario.nome || "Nome não informado"} · ${beneficiario.participacao ?? 0}% · PEP: ${beneficiario.pep || "Não informado"}`
+    : "Não cadastrado";
   return [
     ["CNPJ", item.doc],
     ["Nome fantasia", item.nomeFantasia || "Não informado"],
@@ -1500,8 +1506,8 @@ function assignorDetailRows(item: Assignor): [string, string][] {
     ["KYC", item.kycStatus || "Pendente"],
     ["Sanções", item.consultaSancoes || "Não consultado"],
     ["PEP", item.exposicaoPep || "Não informado"],
-    ["Procurador", procurador ? `${procurador.nome} · ${procurador.cargo} · ${procurador.poderes}` : "Não cadastrado"],
-    ["Beneficiário final", beneficiario ? `${beneficiario.nome} · ${beneficiario.participacao}% · PEP: ${beneficiario.pep}` : "Não cadastrado"],
+    ["Procurador", procuradorText],
+    ["Beneficiário final", beneficiarioText],
     ["Usuários do portal", String(item.portalUsers?.length ?? 0)],
     ["Convites pendentes", String((item.portalUsers ?? []).filter((user) => user.status === "Convite pendente").length)],
     ["Acessos do portal", (item.portalUsers ?? []).length ? (item.portalUsers ?? []).map((user) => `${user.name} · ${user.email} · ${user.status}`).join(" | ") : "Nenhum usuário externo criado"],
@@ -3778,19 +3784,48 @@ function SelectField({ label, name, options, defaultValue }: { label: string; na
   return <div className="field"><label htmlFor={id}>{label}</label><select id={id} name={name} defaultValue={defaultValue}>{options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>;
 }
 
+function cleanDisplayText(value: unknown) {
+  return String(value ?? "Não informado")
+    .replaceAll("undefined", "Não informado")
+    .replaceAll("OperaÃ§Ãµes", "Operações")
+    .replaceAll("operaÃ§Ã£o", "operação")
+    .replaceAll("operaÃ§Ãµes", "operações")
+    .replaceAll("aprovaÃ§Ã£o", "aprovação")
+    .replaceAll("exposiÃ§Ã£o", "exposição")
+    .replaceAll("usuÃ¡rios", "usuários")
+    .replaceAll("CrÃ©dito", "Crédito")
+    .replaceAll("ComitÃª", "Comitê")
+    .replaceAll("VisÃ£o", "Visão")
+    .replaceAll("ImportaÃ§Ã£o", "Importação")
+    .replaceAll("ConfirmaÃ§Ã£o", "Confirmação")
+    .replaceAll("CobranÃ§a", "Cobrança")
+    .replaceAll("gestÃ£o", "gestão")
+    .replaceAll("anÃ¡lise", "análise")
+    .replaceAll("invÃ¡lido", "inválido")
+    .replaceAll("obrigatÃ³rio", "obrigatório")
+    .replaceAll("Opera??es", "Operações")
+    .replaceAll("opera??o", "operação")
+    .replaceAll("opera??es", "operações")
+    .replaceAll("aprova??o", "aprovação")
+    .replaceAll("exposi??o", "exposição")
+    .replaceAll("n??o", "não")
+    .replaceAll("N??o", "Não")
+    .replaceAll("usu??rios", "usuários");
+}
+
 function DetailModal({ detail, close }: { detail: { title: string; rows: [string, string][] }; close: () => void }) {
   return (
     <div className="modalback" onClick={close}>
       <div className="modal detail-modal" onClick={(event) => event.stopPropagation()}>
         <div className="detail-modal-head">
           <div>
-            <h2>{detail.title}</h2>
+            <h2>{cleanDisplayText(detail.title)}</h2>
             <p className="muted">Visão detalhada da entidade.</p>
           </div>
           <button aria-label="Fechar detalhe" className="modal-close" onClick={close} type="button">×</button>
         </div>
         <div className="detail-modal-body">
-          {detail.rows.map(([k, v]) => <div className="rule" key={k}>{k}<b>{v}</b></div>)}
+          {detail.rows.map(([k, v]) => <div className="rule" key={k}>{cleanDisplayText(k)}<b>{cleanDisplayText(v)}</b></div>)}
         </div>
         <div className="detail-modal-actions">
           <button className="btn gold" onClick={close} type="button">Voltar</button>
