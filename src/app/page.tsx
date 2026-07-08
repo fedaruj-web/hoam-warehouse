@@ -3779,7 +3779,25 @@ function SelectField({ label, name, options, defaultValue }: { label: string; na
 }
 
 function DetailModal({ detail, close }: { detail: { title: string; rows: [string, string][] }; close: () => void }) {
-  return <div className="modalback"><div className="modal"><h2>{detail.title}</h2><p className="muted">Visão detalhada da entidade.</p>{detail.rows.map(([k, v]) => <div className="rule" key={k}>{k}<b>{v}</b></div>)}<div className="actions"><button className="btn gold" onClick={close}>Fechar</button></div></div></div>;
+  return (
+    <div className="modalback" onClick={close}>
+      <div className="modal detail-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="detail-modal-head">
+          <div>
+            <h2>{detail.title}</h2>
+            <p className="muted">Visão detalhada da entidade.</p>
+          </div>
+          <button aria-label="Fechar detalhe" className="modal-close" onClick={close} type="button">×</button>
+        </div>
+        <div className="detail-modal-body">
+          {detail.rows.map(([k, v]) => <div className="rule" key={k}>{k}<b>{v}</b></div>)}
+        </div>
+        <div className="detail-modal-actions">
+          <button className="btn gold" onClick={close} type="button">Voltar</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Upload({ close, done }: { close: () => void; done: (file?: File | null) => void }) {

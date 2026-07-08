@@ -52,6 +52,75 @@
   color: #fff;
 }
 
+.detail-modal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: min(86vh, 820px);
+  overflow: hidden;
+  padding: 0;
+  width: min(720px, 92vw);
+}
+
+.detail-modal-head {
+  align-items: flex-start;
+  border-bottom: 1px solid #252a2f;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  padding: 22px 26px 16px;
+}
+
+.detail-modal-head h2 {
+  margin: 0 0 6px;
+}
+
+.detail-modal-head .muted {
+  margin: 0;
+}
+
+.modal-close {
+  align-items: center;
+  background: #171a1d;
+  border: 1px solid #34383d;
+  border-radius: 50%;
+  color: #fff;
+  cursor: pointer;
+  display: grid;
+  flex: 0 0 auto;
+  font-size: 22px;
+  height: 34px;
+  line-height: 1;
+  place-items: center;
+  width: 34px;
+}
+
+.modal-close:hover {
+  border-color: #c9a45d;
+  color: #c9a45d;
+}
+
+.detail-modal-body {
+  overflow: auto;
+  padding: 0 26px;
+}
+
+.detail-modal-body .rule {
+  gap: 18px;
+}
+
+.detail-modal-body .rule b {
+  max-width: 55%;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.detail-modal-actions {
+  border-top: 1px solid #252a2f;
+  display: flex;
+  justify-content: flex-end;
+  padding: 14px 26px;
+}
+
 .row-actions {
   display: flex;
   flex-wrap: wrap;
