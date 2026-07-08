@@ -1,0 +1,611 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  ADMIN
+  CREDIT
+  OPERATIONS
+  COMMITTEE
+  VIEWER
+}
+
+enum EntityStatus {
+  ACTIVE
+  REVIEW
+  BLOCKED
+  INACTIVE
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  BLOCKED
+  INACTIVE
+}
+
+enum PermissionAction {
+  VIEW
+  CREATE
+  UPDATE
+  APPROVE
+  PURCHASE
+  ADMIN
+}
+
+enum ReceivableStatus {
+  IMPORTED
+  ELIGIBLE
+  REVIEW
+  INELIGIBLE
+  APPROVED
+  PURCHASED
+  SETTLED
+  OVERDUE
+  CANCELLED
+}
+
+enum DocumentType {
+  CONTRACT
+  COLLATERAL
+  RECEIPT
+  KYC
+  BORDER
+  COMMITTEE
+  PAYMENT
+  POWER_OF_ATTORNEY
+}
+
+enum DocumentStatus {
+  PENDING
+  VALID
+  EXPIRED
+  REVIEW
+}
+
+enum CashMovementType {
+  INFLOW
+  OUTFLOW
+}
+
+enum FundingStatus {
+  STRUCTURING
+  ISSUED
+  SETTLED
+}
+
+model User {
+  id                 String              @id @default(cuid())
+  name               String
+  email              String              @unique
+  passwordHash       String
+  role               Role                @default(VIEWER)
+  status             UserStatus          @default(INVITED)
+  assignorId         String?
+  assignor           Assignor?           @relation(fields: [assignorId], references: [id])
+  permissionGroupId  String?
+  permissionGroup    PermissionGroup?    @relation(fields: [permissionGroupId], references: [id])
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  deletedAt          DateTime?
+  logs               AuditLog[]
+  batches            ImportBatch[]
+  purchases          Purchase[]
+  sessions           UserSession[]
+  documents          Document[]
+  settlements        Settlement[]
+  confirmationTokens ConfirmationToken[]
+  purchaseTickets    PurchaseTicket[]
+
+  @@index([deletedAt, status])
+  @@index([assignorId])
+  @@index([permissionGroupId])
+}
+
+model UserSession {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  tokenHash String    @unique
+  ipAddress String?
+  userAgent String?
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  @@index([userId, expiresAt])
+}
+
+model PermissionGroup {
+  id          String            @id @default(cuid())
+  code        String            @unique
+  name        String
+  description String?
+  active      Boolean           @default(true)
+  system      Boolean           @default(false)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  deletedAt   DateTime?
+  users       User[]
+  permissions GroupPermission[]
+
+  @@index([deletedAt, active])
+}
+
+model GroupPermission {
+  id        String           @id @default(cuid())
+  groupId   String
+  group     PermissionGroup  @relation(fields: [groupId], references: [id])
+  module    String
+  action    PermissionAction
+  granted   Boolean          @default(true)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@unique([groupId, module, action])
+  @@index([module, action])
+}
+
+model Assignor {
+  id                       String       @id @default(cuid())
+  code                     String       @unique
+  legalName                String
+  tradeName                String?
+  taxId                    String       @unique
+  stateRegistration        String?
+  municipalRegistration    String?
+  foundationDate           DateTime?
+  sector                   String?
+  website                  String?
+  email                    String?
+  phone                    String?
+  addressLine              String?
+  addressCity              String?
+  addressState             String?
+  economicGroup            String?
+  annualRevenue            Decimal?     @db.Decimal(18, 2)
+  employeeCount            Int?
+  creditLimit              Decimal      @db.Decimal(18, 2)
+  relationshipManager      String?
+  onboardingStage          String       @default("Cadastro inicial")
+  complianceStatus         String       @default("Pendente")
+  kycStatus                String       @default("Pendente")
+  sanctionScreening        String       @default("Não consultado")
+  pepExposure              String       @default("Não informado")
+  complianceNotes          String?
+  lastComplianceReview     DateTime?
+  representatives          Json?
+  ultimateBeneficialOwners Json?
+  status                   EntityStatus @default(REVIEW)
+  createdAt                DateTime     @default(now())
+  updatedAt                DateTime     @updatedAt
+  deletedAt                DateTime?
+  receivables              Receivable[]
+  purchases                Purchase[]
+  portalUsers              User[]
+
+  @@index([deletedAt, status])
+  @@index([complianceStatus, kycStatus])
+}
+
+model Debtor {
+  id                    String       @id @default(cuid())
+  code                  String       @unique
+  legalName             String
+  tradeName             String?
+  taxId                 String       @unique
+  rating                String?
+  exposureLimit         Decimal?     @db.Decimal(18, 2)
+  email                 String?
+  phone                 String?
+  website               String?
+  addressLine           String?
+  addressCity           String?
+  addressState          String?
+  financialContactName  String?
+  financialContactRole  String?
+  financialContactEmail String?
+  financialContactPhone String?
+  confirmationEmail     String?
+  confirmationPhone     String?
+  confirmationChannel   String       @default("E-mail")
+  confirmationWindow    String?
+  confirmationStatus    String       @default("Pendente")
+  lastConfirmationAt    DateTime?
+  confirmationNotes     String?
+  relationshipEvidence  String?
+  protestHistory        String?
+  paymentBehavior       String?
+  operationalNotes      String?
+  status                EntityStatus @default(ACTIVE)
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  deletedAt             DateTime?
+  receivables           Receivable[]
+
+  @@index([deletedAt, status])
+  @@index([confirmationStatus, rating])
+}
+
+model ImportBatch {
+  id               String       @id @default(cuid())
+  code             String       @unique
+  fileName         String
+  status           String
+  totalRows        Int          @default(0)
+  validRows        Int          @default(0)
+  invalidRows      Int          @default(0)
+  validationErrors Json?
+  importedById     String
+  importedBy       User         @relation(fields: [importedById], references: [id])
+  createdAt        DateTime     @default(now())
+  deletedAt        DateTime?
+  receivables      Receivable[]
+}
+
+model Receivable {
+  id                   String                  @id @default(cuid())
+  externalId           String                  @unique
+  assignorId           String
+  assignor             Assignor                @relation(fields: [assignorId], references: [id])
+  debtorId             String
+  debtor               Debtor                  @relation(fields: [debtorId], references: [id])
+  batchId              String
+  batch                ImportBatch             @relation(fields: [batchId], references: [id])
+  issueDate            DateTime
+  dueDate              DateTime
+  faceValue            Decimal                 @db.Decimal(18, 2)
+  purchasePrice        Decimal?                @db.Decimal(18, 2)
+  status               ReceivableStatus        @default(IMPORTED)
+  confirmationStatus   String                  @default("Pendente")
+  confirmationChannel  String                  @default("E-mail")
+  confirmationEvidence String?
+  confirmationNotes    String?
+  confirmedAt          DateTime?
+  confirmedById        String?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+  deletedAt            DateTime?
+  evaluations          EligibilityEvaluation[]
+  purchaseItem         PurchaseItem?
+  portfolio            PortfolioItem?
+  documents            Document[]
+  transitions          WorkflowTransition[]
+  settlements          Settlement[]
+  confirmationTokens   ConfirmationToken[]
+  purchaseTicketItems  PurchaseTicketItem[]
+
+  @@index([deletedAt, status])
+  @@index([confirmationStatus, dueDate])
+  @@index([dueDate])
+}
+
+model ConfirmationToken {
+  id                 String     @id @default(cuid())
+  token              String     @unique
+  receivableId       String
+  receivable         Receivable @relation(fields: [receivableId], references: [id])
+  expiresAt          DateTime
+  usedAt             DateTime?
+  revokedAt          DateTime?
+  responseStatus     String?
+  respondentName     String?
+  respondentRole     String?
+  respondentEmail    String?
+  respondentPhone    String?
+  responseNotes      String?
+  evidenceHash       String?
+  ipAddress          String?
+  userAgent          String?
+  recipientEmail     String?
+  emailStatus        String?
+  emailProviderId    String?
+  emailError         String?
+  emailSentAt        DateTime?
+  emailLastAttemptAt DateTime?
+  emailAttempts      Int        @default(0)
+  createdById        String?
+  createdBy          User?      @relation(fields: [createdById], references: [id])
+  createdAt          DateTime   @default(now())
+
+  @@index([receivableId, expiresAt])
+  @@index([recipientEmail, emailStatus])
+  @@index([usedAt, revokedAt])
+}
+
+model EligibilityRule {
+  id          String                  @id @default(cuid())
+  name        String
+  ruleType    String
+  operator    String
+  value       Json
+  policyCode  String                  @default("POL-WH-ELIG")
+  policyName  String                  @default("Política de Elegibilidade Warehouse")
+  effectiveAt DateTime?
+  retiredAt   DateTime?
+  active      Boolean                 @default(true)
+  version     Int                     @default(1)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  deletedAt   DateTime?
+  evaluations EligibilityEvaluation[]
+}
+
+model EligibilityEvaluation {
+  id             String          @id @default(cuid())
+  receivableId   String
+  receivable     Receivable      @relation(fields: [receivableId], references: [id])
+  ruleId         String
+  rule           EligibilityRule @relation(fields: [ruleId], references: [id])
+  passed         Boolean
+  message        String?
+  policyVersion  Int?
+  policySnapshot Json?
+  evaluatedAt    DateTime        @default(now())
+
+  @@unique([receivableId, ruleId])
+}
+
+model Purchase {
+  id            String         @id @default(cuid())
+  code          String         @unique
+  assignorId    String
+  assignor      Assignor       @relation(fields: [assignorId], references: [id])
+  status        String
+  faceValue     Decimal        @db.Decimal(18, 2)
+  purchaseValue Decimal        @db.Decimal(18, 2)
+  createdById   String
+  createdBy     User           @relation(fields: [createdById], references: [id])
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  deletedAt     DateTime?
+  items         PurchaseItem[]
+  documents     Document[]
+}
+
+model PurchaseItem {
+  id              String     @id @default(cuid())
+  purchaseId      String
+  purchase        Purchase   @relation(fields: [purchaseId], references: [id])
+  receivableId    String     @unique
+  receivable      Receivable @relation(fields: [receivableId], references: [id])
+  purchasePrice   Decimal    @db.Decimal(18, 2)
+  baseAnnualRate  Decimal?   @db.Decimal(10, 6)
+  effectiveRate   Decimal?   @db.Decimal(10, 6)
+  riskSpread      Decimal?   @db.Decimal(10, 6)
+  serviceFee      Decimal?   @db.Decimal(18, 2)
+  discount        Decimal?   @db.Decimal(18, 2)
+  discountPercent Decimal?   @db.Decimal(10, 6)
+  businessDays    Int?
+  pricingSnapshot Json?
+}
+
+model PurchaseTicket {
+  id              String               @id @default(cuid())
+  code            String               @unique
+  status          String               @default("Rascunho")
+  faceValue       Decimal              @db.Decimal(18, 2)
+  purchaseValue   Decimal              @db.Decimal(18, 2)
+  discountPercent Decimal?             @db.Decimal(10, 6)
+  effectiveRate   Decimal?             @db.Decimal(10, 6)
+  riskSpread      Decimal?             @db.Decimal(10, 6)
+  baseAnnualRate  Decimal?             @db.Decimal(10, 6)
+  serviceFeeBps   Int                  @default(0)
+  readyCount      Int                  @default(0)
+  blockedCount    Int                  @default(0)
+  ticketText      String
+  approvalNotes   String?
+  submittedAt     DateTime?
+  reviewedAt      DateTime?
+  reviewedById    String?
+  snapshot        Json?
+  createdById     String
+  createdBy       User                 @relation(fields: [createdById], references: [id])
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  deletedAt       DateTime?
+  items           PurchaseTicketItem[]
+
+  @@index([status, createdAt])
+  @@index([createdById, createdAt])
+}
+
+model PurchaseTicketItem {
+  id                String         @id @default(cuid())
+  ticketId          String
+  ticket            PurchaseTicket @relation(fields: [ticketId], references: [id])
+  receivableId      String?
+  receivable        Receivable?    @relation(fields: [receivableId], references: [id])
+  externalId        String
+  assignorName      String
+  debtorName        String
+  dueDate           String?
+  faceValue         Decimal        @db.Decimal(18, 2)
+  purchasePrice     Decimal        @db.Decimal(18, 2)
+  effectiveRate     Decimal?       @db.Decimal(10, 6)
+  riskSpread        Decimal?       @db.Decimal(10, 6)
+  status            String
+  readinessSnapshot Json?
+  pricingSnapshot   Json?
+  createdAt         DateTime       @default(now())
+
+  @@index([ticketId])
+  @@index([receivableId])
+  @@index([externalId])
+}
+
+model PortfolioItem {
+  id               String     @id @default(cuid())
+  receivableId     String     @unique
+  receivable       Receivable @relation(fields: [receivableId], references: [id])
+  acquisitionDate  DateTime
+  acquisitionValue Decimal    @db.Decimal(18, 2)
+  outstandingValue Decimal    @db.Decimal(18, 2)
+  status           String
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  deletedAt        DateTime?
+}
+
+model Settlement {
+  id                String        @id @default(cuid())
+  code              String        @unique
+  receivableId      String
+  receivable        Receivable    @relation(fields: [receivableId], references: [id])
+  createdById       String
+  createdBy         User          @relation(fields: [createdById], references: [id])
+  cashMovementId    String?
+  cashMovement      CashMovement? @relation(fields: [cashMovementId], references: [id])
+  action            String
+  amount            Decimal?      @db.Decimal(18, 2)
+  date              DateTime
+  method            String?
+  notes             String?
+  outstandingBefore Decimal       @db.Decimal(18, 2)
+  outstandingAfter  Decimal       @db.Decimal(18, 2)
+  createdAt         DateTime      @default(now())
+  deletedAt         DateTime?
+
+  @@index([receivableId, date])
+  @@index([action, date])
+}
+
+model Document {
+  id           String         @id @default(cuid())
+  code         String         @unique
+  name         String
+  type         DocumentType
+  status       DocumentStatus @default(PENDING)
+  stage        String?
+  requirement  String?
+  storageKey   String?
+  sizeBytes    Int?
+  expiresAt    DateTime?
+  assignorId   String?
+  debtorId     String?
+  receivableId String?
+  purchaseId   String?
+  uploadedById String
+  uploadedBy   User           @relation(fields: [uploadedById], references: [id])
+  receivable   Receivable?    @relation(fields: [receivableId], references: [id])
+  purchase     Purchase?      @relation(fields: [purchaseId], references: [id])
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  deletedAt    DateTime?
+
+  @@index([type, status])
+  @@index([stage, requirement])
+  @@index([receivableId])
+  @@index([purchaseId])
+}
+
+model CashMovement {
+  id               String               @id @default(cuid())
+  code             String               @unique
+  accountId        String?
+  account          CashAccount?         @relation(fields: [accountId], references: [id])
+  date             DateTime
+  description      String
+  type             CashMovementType
+  amount           Decimal              @db.Decimal(18, 2)
+  reference        String?
+  createdAt        DateTime             @default(now())
+  deletedAt        DateTime?
+  settlements      Settlement[]
+  statementEntries BankStatementEntry[]
+
+  @@index([accountId, date])
+  @@index([date, type])
+}
+
+model CashAccount {
+  id               String               @id @default(cuid())
+  code             String               @unique
+  name             String
+  bankName         String?
+  branch           String?
+  accountNumber    String?
+  accountType      String
+  purpose          String
+  currency         String               @default("BRL")
+  openingBalance   Decimal              @default(0) @db.Decimal(18, 2)
+  status           String               @default("Ativa")
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  deletedAt        DateTime?
+  movements        CashMovement[]
+  statementEntries BankStatementEntry[]
+
+  @@index([purpose, status])
+}
+
+model BankStatementEntry {
+  id             String           @id @default(cuid())
+  code           String           @unique
+  accountId      String
+  account        CashAccount      @relation(fields: [accountId], references: [id])
+  cashMovementId String?
+  cashMovement   CashMovement?    @relation(fields: [cashMovementId], references: [id])
+  statementDate  DateTime
+  description    String
+  type           CashMovementType
+  amount         Decimal          @db.Decimal(18, 2)
+  reference      String?
+  status         String           @default("Pendente")
+  notes          String?
+  reconciledAt   DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  deletedAt      DateTime?
+
+  @@index([accountId, statementDate])
+  @@index([status, statementDate])
+}
+
+model FundingIssue {
+  id         String        @id @default(cuid())
+  code       String        @unique
+  instrument String
+  amount     Decimal       @db.Decimal(18, 2)
+  rate       String
+  maturity   DateTime?
+  status     FundingStatus @default(STRUCTURING)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  deletedAt  DateTime?
+}
+
+model WorkflowTransition {
+  id           String            @id @default(cuid())
+  receivableId String
+  receivable   Receivable        @relation(fields: [receivableId], references: [id])
+  fromStatus   ReceivableStatus?
+  toStatus     ReceivableStatus
+  reason       String?
+  createdById  String?
+  createdAt    DateTime          @default(now())
+
+  @@index([receivableId, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String
+  entityType String
+  entityId   String
+  before     Json?
+  after      Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId, createdAt])
+}

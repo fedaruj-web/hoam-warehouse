@@ -1,0 +1,25 @@
+.env
+.env.*
+!.env.example
+.next/
+node_modules/
+dev.log
+dev.err
+start.log
+start.err
+
+
+.vercel
+.env*
+!.env.example
+
+# Local development logs and runtime artifacts
+*.log
+*.err
+vercel-auth-cookies.txt
+
+# Codex/local workspace artifacts
+.codex/
+.agents/
+outputs/
+work/
