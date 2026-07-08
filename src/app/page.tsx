@@ -1269,6 +1269,16 @@ export default function Home() {
             <HeaderAction view={view} can={can} setModal={setModal} runRules={runRules} />
           </div>
 
+          <OperationalRail
+            assignors={assignors}
+            can={can}
+            debtors={debtors}
+            owned={owned}
+            receivables={activeReceivables}
+            setView={setView}
+            view={view}
+          />
+
           {notice && (
             <div className="notice">
               <span>{notice}</span>
@@ -1420,6 +1430,50 @@ function HeaderAction({ view, can, setModal, runRules }: { view: View; can: (m: 
   return null;
 }
 
+function OperationalRail({
+  assignors,
+  can,
+  debtors,
+  owned,
+  receivables,
+  setView,
+  view,
+}: {
+  assignors: Assignor[];
+  can: (m: string, a: PermissionAction) => boolean;
+  debtors: Debtor[];
+  owned: Receivable[];
+  receivables: Receivable[];
+  setView: (view: View) => void;
+  view: View;
+}) {
+  const steps: { view: View; module: string; label: string; metric: string; ok: boolean }[] = [
+    { view: "cedentes", module: "Cedentes", label: "Cedentes", metric: `${assignors.filter((item) => !item.deletedAt).length} cad.`, ok: assignors.some((item) => !item.deletedAt) },
+    { view: "sacados", module: "Sacados", label: "Sacados", metric: `${debtors.filter((item) => !item.deletedAt).length} cad.`, ok: debtors.some((item) => !item.deletedAt) },
+    { view: "importacao", module: "Importação", label: "Upload", metric: `${receivables.length} ativos`, ok: receivables.length > 0 },
+    { view: "elegibilidade", module: "Elegibilidade", label: "Elegibilidade", metric: `${receivables.filter((item) => ["Elegível", "Aprovado"].includes(item.status)).length} prontos`, ok: receivables.some((item) => ["Elegível", "Aprovado"].includes(item.status)) },
+    { view: "compra", module: "Compra", label: "Compra", metric: `${receivables.filter((item) => item.status === "Elegível" || item.status === "Aprovado").length} na mesa`, ok: receivables.some((item) => item.status === "Elegível" || item.status === "Aprovado") },
+    { view: "carteira", module: "Carteira", label: "Carteira", metric: `${owned.length} ativos`, ok: owned.length > 0 },
+  ];
+  const visibleSteps = steps.filter((step) => can(step.module, "view"));
+  if (!visibleSteps.length) return null;
+  return (
+    <div className="operation-rail">
+      <span>Fluxo MVP</span>
+      <div>
+        {visibleSteps.map((step, index) => (
+          <button className={view === step.view ? "active" : ""} key={step.view} onClick={() => setView(step.view)} type="button">
+            <em>{index + 1}</em>
+            <b>{step.label}</b>
+            <small>{step.metric}</small>
+            <i className={step.ok ? "ok" : ""} />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Logo() {
   return <div className="logo"><div className="mark">H</div><div>HOAM<small>WAREHOUSE</small></div></div>;
 }
@@ -1520,6 +1574,13 @@ function Dashboard({
   const overdue = owned.filter((item) => item.status === "Vencido" || (item.status !== "Liquidado" && daysFromToday(item.venc) < 0));
   const topAssignor = topConcentration(openPortfolio, "ced");
   const topDebtor = topConcentration(openPortfolio, "sac");
+  const readiness = [
+    { label: "Cadastros-base", ok: receivables.some((item) => item.ced) && receivables.some((item) => item.sac), detail: "Cedente e sacado vinculados aos ativos" },
+    { label: "Importação", ok: receivables.length > 0, detail: `${receivables.length} direito(s) creditório(s)` },
+    { label: "Elegibilidade", ok: data.elegiveis > 0, detail: `${data.elegiveis} ativo(s) elegível(is)` },
+    { label: "Compra", ok: owned.length > 0, detail: `${owned.length} ativo(s) adquirido(s)` },
+    { label: "Carteira", ok: outstanding > 0, detail: `${fmt(outstanding)} em aberto` },
+  ];
   const statusRows = ["Importado", "Elegível", "Revisão", "Inelegível", "Aprovado", "Comprado", "Vencido", "Liquidado"].map((status) => {
     const items = receivables.filter((item) => item.status === status);
     return { status, count: items.length, value: items.reduce((sum, item) => sum + item.valor, 0) };
@@ -1550,6 +1611,21 @@ function Dashboard({
         <div className="rule">Maior sacado<b>{topDebtor.name || "Sem carteira"} · {fmtPct(topDebtor.ratio)}</b></div>
         <div className="rule">Saldo aberto<b>{fmt(outstanding)}</b></div>
         <div className="rule">Valor total cadastrado<b>{fmt(data.total)}</b></div>
+      </div>
+    </div>
+    <div className="card mvp-readiness">
+      <div>
+        <div className="ctitle">Checklist operacional do MVP</div>
+        <p className="muted">Visão rápida do fluxo mínimo: cadastro → upload → elegibilidade → compra → carteira.</p>
+      </div>
+      <div className="mvp-readiness-grid">
+        {readiness.map((item) => (
+          <div className={item.ok ? "ready" : ""} key={item.label}>
+            <span>{item.ok ? "OK" : "Pendente"}</span>
+            <b>{item.label}</b>
+            <small>{item.detail}</small>
+          </div>
+        ))}
       </div>
     </div>
     <div className="grid">
