@@ -870,7 +870,14 @@ export default function Home() {
       amount: Number(f.get("amount") ?? 0),
       date: String(f.get("date") ?? ""),
       method: String(f.get("method") ?? ""),
-      notes: String(f.get("notes") ?? ""),
+      notes: [
+        String(f.get("notes") ?? "").trim(),
+        `Canal: ${String(f.get("channel") ?? "Não informado")}`,
+        `Contato: ${String(f.get("contact") ?? "Não informado")}`,
+        `Próxima ação: ${String(f.get("nextAction") ?? "Não informado")}`,
+        `Responsável: ${String(f.get("owner") ?? "Operações HOAM")}`,
+        `Evidência: ${String(f.get("evidence") ?? "Não informada")}`,
+      ].filter(Boolean).join(" | "),
     };
     try {
       const result = await persistJson<{ receivable: Receivable }>("/api/settlements", {
@@ -2288,24 +2295,57 @@ function daysFromToday(value: string) {
   return Math.ceil((due.getTime() - base.getTime()) / 86_400_000);
 }
 
+function collectionStage(item: Receivable) {
+  const outstanding = item.outstandingValue ?? item.valor;
+  const aging = daysFromToday(item.venc);
+  const collected = Math.max(0, item.valor - outstanding);
+  if (item.status === "Liquidado" || (item.portfolioStatus ?? "") === "Liquidado" || outstanding <= 0) {
+    return { stage: "Liquidado", priority: "Baixa", next: "Conferir caixa e arquivar evidência", sla: "D+0" };
+  }
+  if ((item.portfolioStatus ?? "").includes("Renegociado")) {
+    return { stage: "Renegociado", priority: "Média", next: "Acompanhar novo compromisso", sla: "D+1" };
+  }
+  if (aging < -10) return { stage: "Cobrança crítica", priority: "Crítica", next: "Escalar para jurídico/comitê", sla: "Hoje" };
+  if (aging < 0) return { stage: "Vencido", priority: "Alta", next: "Acionar sacado e registrar evidência", sla: "Hoje" };
+  if (aging <= 2) return { stage: "D-2 a D0", priority: "Alta", next: "Confirmar pagamento programado", sla: "Hoje" };
+  if (aging <= 7) return { stage: "Pré-vencimento", priority: "Média", next: "Enviar lembrete de vencimento", sla: "D+1" };
+  if (collected > 0) return { stage: "Liquidação parcial", priority: "Média", next: "Cobrar saldo remanescente", sla: "D+1" };
+  return { stage: "A vencer", priority: "Baixa", next: "Monitorar agenda", sla: "D+3" };
+}
+
+function collectionHistory(item: Receivable) {
+  const outstanding = item.outstandingValue ?? item.valor;
+  const events = [
+    { label: "Compra registrada", detail: `Entrada em carteira · aquisição ${fmt(item.acquisitionValue ?? item.preco ?? priceReceivable(item).purchasePrice)}` },
+  ];
+  if (item.confirmationStatus) events.push({ label: "Confirmação", detail: `${item.confirmationStatus} · ${item.confirmationChannel ?? "canal não informado"}` });
+  if (outstanding < item.valor && outstanding > 0) events.push({ label: "Recebimento parcial", detail: `Recebido ${fmt(item.valor - outstanding)} · saldo ${fmt(outstanding)}` });
+  if (item.status === "Vencido" || (item.portfolioStatus ?? "").includes("cobrança")) events.push({ label: "Cobrança", detail: item.portfolioStatus ?? "Ativo vencido" });
+  if ((item.portfolioStatus ?? "").includes("Renegociado")) events.push({ label: "Renegociação", detail: "Compromisso renegociado registrado" });
+  if (item.status === "Liquidado" || (item.portfolioStatus ?? "") === "Liquidado" || outstanding <= 0) events.push({ label: "Liquidação", detail: "Saldo baixado da carteira" });
+  return events;
+}
+
 function SettlementPage({ receivables, onSettle }: { receivables: Receivable[]; onSettle: (item: Receivable) => void }) {
   const open = receivables.filter((item) => item.status !== "Liquidado" && (item.outstandingValue ?? item.valor) > 0);
   const settled = receivables.filter((item) => item.status === "Liquidado" || (item.portfolioStatus ?? "") === "Liquidado");
   const overdue = open.filter((item) => item.status === "Vencido" || daysFromToday(item.venc) < 0);
   const outstanding = open.reduce((sum, item) => sum + (item.outstandingValue ?? item.valor), 0);
   const collected = receivables.reduce((sum, item) => sum + Math.max(0, item.valor - (item.outstandingValue ?? item.valor)), 0);
+  const collectionRows = receivables.map((item) => ({ item, stage: collectionStage(item), history: collectionHistory(item) }));
+  const critical = collectionRows.filter((row) => ["Crítica", "Alta"].includes(row.stage.priority)).length;
   return <>
     <div className="kpis">
       <K label="Saldo em aberto" v={fmt(outstanding)} />
       <K label="Recebido acumulado" v={fmt(collected)} />
       <K label="Ativos vencidos" v={String(overdue.length)} />
-      <K label="Liquidados" v={String(settled.length)} />
+      <K label="Prioridade alta/crítica" v={String(critical)} />
     </div>
     <div className="grid">
       <div className="card">
-        <div className="ctitle">Agenda de cobrança</div>
-        <Table heads={["Ativo", "Cedente / Sacado", "Vencimento", "Face", "Saldo", "Aging", "Status", "Ação"]}>
-          {receivables.map((item) => {
+        <div className="ctitle">Régua de cobrança</div>
+        <Table heads={["Ativo", "Cedente / Sacado", "Vencimento", "Saldo", "Aging", "Etapa", "Prioridade", "Próxima ação", "Ação"]}>
+          {collectionRows.map(({ item, stage }) => {
             const outstandingValue = item.outstandingValue ?? item.valor;
             const aging = daysFromToday(item.venc);
             const status = item.portfolioStatus ?? item.status;
@@ -2315,10 +2355,11 @@ function SettlementPage({ receivables, onSettle }: { receivables: Receivable[]; 
                 <td className="mono">{item.id}</td>
                 <td><div className="entity">{item.ced}</div><div className="sub">{item.sac}</div></td>
                 <td>{item.venc}</td>
-                <td>{fmt(item.valor)}</td>
                 <td className="mono">{fmt(outstandingValue)}</td>
                 <td>{aging < 0 ? `${Math.abs(aging)} dia(s) vencido` : `${aging} dia(s)`}</td>
-                <td><Badge v={status} /></td>
+                <td><Badge v={stage.stage} /><div className="sub">{status}</div></td>
+                <td><Badge v={stage.priority} /><div className="sub">SLA {stage.sla}</div></td>
+                <td>{stage.next}</td>
                 <td><button className="btn" disabled={disabled} onClick={() => onSettle(item)}>{disabled ? "Encerrado" : "Registrar"}</button></td>
               </tr>
             );
@@ -2327,13 +2368,31 @@ function SettlementPage({ receivables, onSettle }: { receivables: Receivable[]; 
         {!receivables.length && <div className="note">Nenhum ativo adquirido em carteira para cobrança.</div>}
       </div>
       <div className="card">
-        <div className="ctitle">Política operacional</div>
+        <div className="ctitle">Resumo da carteira</div>
+        <div className="collection-grid">
+          <div><span>Liquidados</span><b>{settled.length}</b><small>{fmt(collected)} recebido</small></div>
+          <div><span>Vencidos</span><b>{overdue.length}</b><small>{fmt(overdue.reduce((sum, item) => sum + (item.outstandingValue ?? item.valor), 0))}</small></div>
+          <div><span>Aberto</span><b>{open.length}</b><small>{fmt(outstanding)}</small></div>
+        </div>
+        <div className="ctitle space-top">Política operacional</div>
         {[
           "Recebimento parcial mantém o ativo em carteira com novo saldo em aberto.",
           "Recebimento total baixa o ativo como liquidado e gera entrada de caixa.",
           "Marcação de vencido leva o ativo para cobrança sem gerar caixa.",
           "Todo evento gera transição de workflow e audit log.",
         ].map((rule) => <div className="rule" key={rule}>{rule}<Check size={14} color="#70c69a" /></div>)}
+      </div>
+    </div>
+    <div className="card">
+      <div className="ctitle">Histórico operacional por ativo</div>
+      <div className="collection-history-grid">
+        {collectionRows.slice(0, 12).map(({ item, history }) => (
+          <div className="collection-history" key={item.id}>
+            <div className="pipe-card-top"><b className="mono">{item.id}</b><Badge v={item.portfolioStatus ?? item.status} /></div>
+            <small>{item.ced} → {item.sac}</small>
+            {history.map((event) => <p key={`${item.id}-${event.label}`}><span>{event.label}</span>{event.detail}</p>)}
+          </div>
+        ))}
       </div>
     </div>
   </>;
@@ -3270,6 +3329,16 @@ function SettlementModal({ close, receivable, save }: { close: () => void; recei
             defaultValue="Boleto"
             options={["Boleto", "PIX", "TED", "Transferência", "Câmara", "Outro"].map((x) => [x, x])}
           />
+          <SelectField
+            label="Canal de contato"
+            name="channel"
+            defaultValue="E-mail"
+            options={["E-mail", "Telefone", "WhatsApp", "Portal bancário", "Assessoria", "Jurídico", "Outro"].map((x) => [x, x])}
+          />
+          <Field label="Contato / protocolo" name="contact" required={false} />
+          <Field label="Próxima ação" name="nextAction" value="Acompanhar pagamento" required={false} />
+          <Field label="Responsável" name="owner" value="Operações HOAM" required={false} />
+          <Field label="Evidência" name="evidence" required={false} />
         </div>
         <div className="field full-field">
           <label htmlFor="field-notes">Observações / evidência</label>
