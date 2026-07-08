@@ -530,9 +530,57 @@
   margin: 2px 0 0;
 }
 
+.reconciliation-strip {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 14px 0;
+}
+
+.reconciliation-strip div {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.reconciliation-strip span,
+.reconciliation-strip small,
+.match-card small {
+  color: #8f969f;
+  display: block;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.reconciliation-strip b {
+  color: #fff;
+  display: block;
+  font-family: var(--mono);
+  font-size: 14px;
+  margin: 4px 0;
+}
+
+.match-card {
+  background: rgba(6, 8, 10, 0.6);
+  border: 1px solid rgba(201, 164, 93, 0.14);
+  border-radius: 12px;
+  min-width: 220px;
+  padding: 9px;
+}
+
+.match-card div {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
 @media (max-width: 1100px) {
   .metric-grid,
-  .pipeline-summary {
+  .pipeline-summary,
+  .reconciliation-strip {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -544,7 +592,8 @@
 
 @media (max-width: 720px) {
   .metric-grid,
-  .pipeline-summary {
+  .pipeline-summary,
+  .reconciliation-strip {
     grid-template-columns: 1fr;
   }
 }

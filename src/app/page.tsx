@@ -1008,13 +1008,13 @@ export default function Home() {
     setModal(null);
   }
 
-  async function reconcileBankStatement(entryId: string, action = "auto_match") {
+  async function reconcileBankStatement(entryId: string, action = "auto_match", cashMovementId?: string) {
     if (!requirePermission("Caixa", "create", entryId)) return;
     const before = bankStatementEntries.find((item) => item.id === entryId);
     try {
       const updated = await persistJson<BankStatementEntry>("/api/bank-statement-entries", {
         method: "PATCH",
-        body: JSON.stringify({ entryId, action }),
+        body: JSON.stringify({ entryId, action, cashMovementId }),
       });
       setBankStatementEntries((items) => items.map((item) => (item.id === updated.id ? updated : item)));
       await refreshAudits();
@@ -2465,6 +2465,86 @@ function categoryConcentrationRows(items: Receivable[], selector: (item: Receiva
     .sort((a, b) => b.amount - a.amount);
 }
 
+type ReconciliationSuggestion = {
+  entry: BankStatementEntry;
+  movement: CashMovement | null;
+  score: number;
+  amountDiff: number;
+  reasons: string[];
+};
+
+function normalizeText(value?: string | null) {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function parseBrDate(value: string) {
+  const [day, month, year] = value.split("/").map(Number);
+  if (!day || !month || !year) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function dateDistanceInDays(a: string, b: string) {
+  const first = parseBrDate(a);
+  const second = parseBrDate(b);
+  if (!first || !second) return 999;
+  return Math.abs(Math.round((first.getTime() - second.getTime()) / 86_400_000));
+}
+
+function sharedTokenScore(a?: string | null, b?: string | null) {
+  const left = new Set(normalizeText(a).split(" ").filter((token) => token.length > 2));
+  const right = new Set(normalizeText(b).split(" ").filter((token) => token.length > 2));
+  if (!left.size || !right.size) return 0;
+  let shared = 0;
+  for (const token of left) if (right.has(token)) shared += 1;
+  return Math.round((shared / Math.max(left.size, right.size)) * 100);
+}
+
+function buildReconciliationSuggestions(entries: BankStatementEntry[], movements: CashMovement[]): ReconciliationSuggestion[] {
+  const reconciledMovementIds = new Set(entries.filter((entry) => entry.status === "Conciliado" && entry.cashMovementId).map((entry) => entry.cashMovementId));
+  const availableMovements = movements.filter((movement) => !reconciledMovementIds.has(movement.id));
+  return entries.map((entry) => {
+    const candidates = availableMovements
+      .filter((movement) => movement.accountId === entry.accountId && movement.type === entry.type)
+      .map((movement) => {
+        const amountDiff = Math.abs(movement.amount - entry.amount);
+        const dayDiff = dateDistanceInDays(entry.date, movement.date);
+        const referenceMatch = Boolean(entry.reference && movement.reference && normalizeText(entry.reference) === normalizeText(movement.reference));
+        const textScore = sharedTokenScore(entry.description, movement.description);
+        const exactAmount = amountDiff <= 0.01;
+        const score = Math.min(100,
+          35 +
+          (exactAmount ? 35 : amountDiff / Math.max(entry.amount, 1) <= 0.01 ? 20 : 0) +
+          (dayDiff === 0 ? 15 : dayDiff <= 2 ? 9 : dayDiff <= 5 ? 4 : 0) +
+          (referenceMatch ? 10 : 0) +
+          Math.min(5, Math.round(textScore / 20)),
+        );
+        const reasons = [
+          "mesma conta",
+          "mesmo tipo",
+          exactAmount ? "valor exato" : `dif. ${fmt(amountDiff)}`,
+          dayDiff === 0 ? "mesma data" : `${dayDiff} dia(s)`,
+          referenceMatch ? "referência igual" : textScore >= 40 ? "descrição similar" : "",
+        ].filter(Boolean);
+        return { movement, amountDiff, score, reasons };
+      })
+      .sort((a, b) => b.score - a.score || a.amountDiff - b.amountDiff);
+    const best = candidates[0];
+    return {
+      entry,
+      movement: best?.movement ?? null,
+      score: best?.score ?? 0,
+      amountDiff: best?.amountDiff ?? 0,
+      reasons: best?.reasons ?? [],
+    };
+  });
+}
+
 function CashPage({
   accounts,
   entries,
@@ -2480,7 +2560,7 @@ function CashPage({
   onAddAccount: () => void;
   onAddMovement: () => void;
   onAddStatement: () => void;
-  onReconcile: (entryId: string, action?: string) => void;
+  onReconcile: (entryId: string, action?: string, cashMovementId?: string) => void;
 }) {
   const balance = accounts.reduce((sum, account) => sum + account.balance, 0);
   const inflows = movements.filter((item) => item.type === "Entrada").reduce((sum, item) => sum + item.amount, 0);
@@ -2488,6 +2568,9 @@ function CashPage({
   const pending = entries.filter((item) => item.status === "Pendente").length;
   const reconciled = entries.filter((item) => item.status === "Conciliado").length;
   const divergent = entries.filter((item) => item.status === "Divergente").length;
+  const suggestions = buildReconciliationSuggestions(entries, movements);
+  const strongSuggestions = suggestions.filter((item) => item.score >= 80).length;
+  const suggestedValue = suggestions.filter((item) => item.score >= 80).reduce((sum, item) => sum + item.entry.amount, 0);
   return <>
     <div className="kpis">
       <K label="Saldo consolidado" v={fmt(balance)} />
@@ -2529,21 +2612,37 @@ function CashPage({
         <K label="Divergências" v={String(divergent)} />
         <K label="Cobertura" v={`${Math.round((reconciled / Math.max(entries.length, 1)) * 100)}%`} />
       </div>
-      <Table heads={["Extrato", "Data", "Conta", "Descrição", "Referência", "Tipo", "Valor", "Status", "Ação"]}>
-        {entries.map((entry) => (
+      <div className="reconciliation-strip">
+        <div><span>Sugestões fortes</span><b>{strongSuggestions}</b><small>{fmt(suggestedValue)}</small></div>
+        <div><span>Critério</span><b>Conta + tipo + valor</b><small>Refina por data, referência e descrição</small></div>
+        <div><span>Uso recomendado</span><b>Pré-conciliar</b><small>Confirmar antes do fechamento diário</small></div>
+      </div>
+      <Table heads={["Extrato", "Data", "Conta", "Descrição", "Referência", "Tipo", "Valor", "Sugestão", "Status", "Ação"]}>
+        {suggestions.map(({ entry, movement, amountDiff, score, reasons }) => (
           <tr key={entry.id}>
             <td className="mono">{entry.id}</td>
             <td>{entry.date}</td>
             <td>{entry.accountName || entry.accountId}</td>
-            <td>{entry.description}</td>
+            <td>{entry.description}<div className="sub">{entry.notes || ""}</div></td>
             <td className="mono">{entry.reference || "-"}</td>
             <td><Badge v={entry.type} /></td>
             <td className="mono">{fmt(entry.amount)}</td>
+            <td>
+              {movement ? (
+                <div className="match-card">
+                  <div><span className="mono">{movement.id}</span><Badge v={`${score}%`} /></div>
+                  <small>{movement.description}</small>
+                  <small>{reasons.join(" · ")}</small>
+                  {amountDiff > 0 && <small>Diferença: {fmt(amountDiff)}</small>}
+                </div>
+              ) : <span className="sub">Sem candidato</span>}
+            </td>
             <td><Badge v={entry.status} /></td>
             <td>
               {entry.status === "Pendente" ? (
                 <div className="row-actions">
-                  <button className="btn" onClick={() => onReconcile(entry.id)}>Conciliar</button>
+                  <button className="btn" disabled={!movement || score < 80 || amountDiff > 0.01} onClick={() => onReconcile(entry.id, "auto_match", movement?.id)}>Aceitar sugestão</button>
+                  <button className="btn" onClick={() => onReconcile(entry.id)}>Auto</button>
                   <button className="btn danger-btn" onClick={() => onReconcile(entry.id, "mark_divergent")}>Divergência</button>
                 </div>
               ) : entry.cashMovementId ? <span className="mono">{entry.cashMovementId}</span> : "Registrado"}
