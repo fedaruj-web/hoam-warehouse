@@ -716,13 +716,20 @@ export default function Home() {
       status: String(f.get("status")) as AppUser["status"],
       password: String(f.get("password")),
     };
-    const user = await persistJson<AppUser>("/api/users", { method: "POST", body: JSON.stringify(input) });
+    const user = await persistJson<AppUser & { inviteEmail?: { status: "skipped" | "sent" | "failed"; reason?: string } }>("/api/users", { method: "POST", body: JSON.stringify(input) });
     setUsers((items) => [...items, user]);
     setGroups((items) => items.map((group) => (group.id === groupId ? { ...group, users: group.users + 1 } : group)));
     audit("USER_CREATED", user.id, null, user);
     await refreshAudits();
     setModal(null);
-    setNotice("Usuário criado com senha provisória.");
+    setNotice(user.inviteEmail?.status === "sent" ? "Usuário criado e convite enviado por e-mail." : user.inviteEmail ? `Usuário criado, mas o e-mail não foi enviado: ${user.inviteEmail.reason ?? "verifique a configuração de e-mail"}.` : "Usuário criado com senha provisória.");
+  }
+
+  async function resendUserInvite(user: AppUser) {
+    if (!requirePermission("Usuários", "admin", user.id)) return;
+    const result = await persistJson<{ email: { status: "skipped" | "sent" | "failed"; reason?: string }; link: string }>(`/api/users/${user.id}/invite`, { method: "POST" });
+    await refreshAudits();
+    setNotice(result.email.status === "sent" ? `Convite reenviado para ${user.email}.` : `Convite gerado, mas o e-mail não foi enviado: ${result.email.reason ?? "verifique a configuração de e-mail"}.`);
   }
 
   async function addDocument(e: FormEvent<HTMLFormElement>) {
@@ -1394,7 +1401,7 @@ export default function Home() {
           {view === "funding" && <FundingPage issues={fundingIssues} portfolioValue={owned.reduce((sum, item) => sum + (item.acquisitionValue ?? item.preco ?? 0), 0)} onAdd={() => setModal("funding")} onStatus={updateFundingStatus} />}
           {view === "documentos" && <DocumentsPage checklists={documentChecklists} documents={documents} canCreate={can("Documentos", "create")} onAdd={() => setModal("documento")} onNotice={setNotice} />}
           {view === "relatorios" && <ReportsPage receivables={activeReceivables} audits={audits} cashMovements={cashMovements} fundingIssues={fundingIssues} />}
-          {view === "usuarios" && <AccessControl audits={audits} groups={groups} onToggle={togglePermission} users={users} />}
+          {view === "usuarios" && <AccessControl audits={audits} groups={groups} onResendInvite={resendUserInvite} onToggle={togglePermission} users={users} />}
         </div>
       </main>
 
@@ -3244,7 +3251,7 @@ function Assets({ ds, owned }: { ds: Receivable[]; owned: string[] }) {
   return <div className="card"><div className="ctitle">Direitos creditórios</div><Table heads={["Ativo", "Cedente / Sacado", "Vencimento", "Valor", "Status"]}>{ds.map((d) => <tr key={d.id}><td className="mono">{d.id}</td><td><div className="entity">{d.ced}</div><div className="sub">{d.sac}</div></td><td>{d.venc}</td><td className="mono">{fmt(d.valor)}</td><td><Badge v={owned.includes(d.id) ? "Em carteira" : d.status} /></td></tr>)}</Table></div>;
 }
 
-function AccessControl({ audits, groups, onToggle, users }: { audits: Audit[]; groups: AccessGroup[]; onToggle: (groupId: string, module: string, action: PermissionAction) => void; users: AppUser[] }) {
+function AccessControl({ audits, groups, onResendInvite, onToggle, users }: { audits: Audit[]; groups: AccessGroup[]; onResendInvite: (user: AppUser) => void; onToggle: (groupId: string, module: string, action: PermissionAction) => void; users: AppUser[] }) {
   const [selected, setSelected] = useState(groups[0].id);
   const activeGroup = groups.find((g) => g.id === selected) ?? groups[0];
   const permissionCount = (group: AccessGroup) => Object.values(group.permissions).reduce((sum, permissions) => sum + permissions.length, 0);
@@ -3288,7 +3295,7 @@ function AccessControl({ audits, groups, onToggle, users }: { audits: Audit[]; g
     <div className="grid access-grid">
       <div className="card">
         <div className="ctitle">Usuários corporativos</div>
-        <Table heads={["Usuário", "Grupo", "Risco", "Status", "Último acesso"]}>
+        <Table heads={["Usuário", "Grupo", "Risco", "Status", "Último acesso", "Ações"]}>
           {users.map((user) => {
             const group = groups.find((item) => item.id === user.groupId);
             const risk = groupRisks.find((item) => item.group.id === user.groupId);
@@ -3299,6 +3306,7 @@ function AccessControl({ audits, groups, onToggle, users }: { audits: Audit[]; g
                 <td><Badge v={risk?.severity ?? "Baixo"} /><div className="sub">{risk?.risks[0] ?? "Perfil regular"}</div></td>
                 <td><Badge v={user.status} /></td>
                 <td className="mono">{user.lastAccess}</td>
+                <td>{user.status === "Convite pendente" ? <button className="mini" onClick={() => onResendInvite(user)}>Reenviar convite</button> : <span className="sub">—</span>}</td>
               </tr>
             );
           })}

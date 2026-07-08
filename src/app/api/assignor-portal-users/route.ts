@@ -1,13 +1,26 @@
 import { NextResponse } from "next/server";
+import { randomBytes } from "crypto";
 import { PermissionAction, UserStatus } from "@prisma/client";
 import { hashPassword } from "@/server/auth";
 import { writeAudit } from "@/server/audit";
 import { requirePermission } from "@/server/authz";
 import { getDbOrNull } from "@/server/db";
 import { mapAssignor } from "@/server/entities";
+import { buildUserInviteEmail, sendUserInviteEmail } from "@/server/email";
 
 function provisionalPassword(email: string) {
   return `HOAM-${email.split("@")[0].slice(0, 4)}-2026!`;
+}
+
+function publicOrigin(request: Request) {
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  const forwardedProto = request.headers.get("x-forwarded-proto") ?? "https";
+  if (forwardedHost) return `${forwardedProto}://${forwardedHost}`;
+  return new URL(request.url).origin;
+}
+
+function inviteUrl(request: Request, token: string) {
+  return `${publicOrigin(request)}/convite/${token}`;
 }
 
 const portalModules = ["Dashboard", "Cedentes", "Sacados", "Importação", "Elegibilidade", "Compra", "Carteira", "Documentos", "Relatórios", "Usuários", "Audit log"];
@@ -92,6 +105,54 @@ export async function POST(request: Request) {
     userId: auth.user.id,
     after: { assignor: assignor.code, user: { id: user.id, email: user.email, roleLabel, status } },
   });
+
+  if (user.status === "INVITED") {
+    await db.userInviteToken.updateMany({
+      where: { userId: user.id, usedAt: null, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7);
+    const invite = await db.userInviteToken.create({
+      data: {
+        token: randomBytes(32).toString("base64url"),
+        userId: user.id,
+        createdById: auth.user.id,
+        expiresAt,
+      },
+    });
+    const emailContent = buildUserInviteEmail({
+      name: user.name,
+      email: user.email,
+      groupName: "Cedente externo",
+      link: inviteUrl(request, invite.token),
+      expiresAt,
+    });
+    const emailResult = await sendUserInviteEmail({
+      to: user.email,
+      subject: emailContent.subject,
+      html: emailContent.html,
+      text: emailContent.text,
+      idempotencyKey: `assignor-portal-invite/${invite.id}`,
+    });
+    await db.userInviteToken.update({
+      where: { id: invite.id },
+      data: {
+        emailStatus: emailResult.status,
+        emailProviderId: emailResult.status === "sent" ? emailResult.providerId : null,
+        emailError: emailResult.status === "sent" ? null : emailResult.reason,
+        emailSentAt: emailResult.status === "sent" ? new Date() : null,
+        emailLastAttemptAt: new Date(),
+        emailAttempts: { increment: 1 },
+      },
+    });
+    await writeAudit(db, {
+      action: emailResult.status === "sent" ? "USER_INVITE_EMAIL_SENT" : "USER_INVITE_EMAIL_NOT_SENT",
+      entityType: "User",
+      entityId: user.id,
+      userId: auth.user.id,
+      after: { assignor: assignor.code, userEmail: user.email, inviteId: invite.id, email: emailResult },
+    });
+  }
 
   const updated = await db.assignor.findUniqueOrThrow({
     where: { code: assignorId },

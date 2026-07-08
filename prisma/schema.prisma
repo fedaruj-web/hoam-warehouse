@@ -98,6 +98,8 @@ model User {
   batches            ImportBatch[]
   purchases          Purchase[]
   sessions           UserSession[]
+  inviteTokens       UserInviteToken[] @relation("UserInviteTarget")
+  createdInviteTokens UserInviteToken[] @relation("UserInviteCreator")
   documents          Document[]
   settlements        Settlement[]
   confirmationTokens ConfirmationToken[]
@@ -316,6 +318,29 @@ model ConfirmationToken {
 
   @@index([receivableId, expiresAt])
   @@index([recipientEmail, emailStatus])
+  @@index([usedAt, revokedAt])
+}
+
+model UserInviteToken {
+  id                 String    @id @default(cuid())
+  token              String    @unique
+  userId             String
+  user               User      @relation("UserInviteTarget", fields: [userId], references: [id])
+  expiresAt          DateTime
+  usedAt             DateTime?
+  revokedAt          DateTime?
+  emailStatus        String?
+  emailProviderId    String?
+  emailError         String?
+  emailSentAt        DateTime?
+  emailLastAttemptAt DateTime?
+  emailAttempts      Int       @default(0)
+  createdById        String?
+  createdBy          User?     @relation("UserInviteCreator", fields: [createdById], references: [id])
+  createdAt          DateTime  @default(now())
+
+  @@index([userId, expiresAt])
+  @@index([emailStatus, createdAt])
   @@index([usedAt, revokedAt])
 }
 

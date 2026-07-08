@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
+import { randomBytes } from "crypto";
 import { usersSeed } from "@/lib/mock-data";
 import type { AppUser } from "@/lib/types";
 import { hashPassword } from "@/server/auth";
 import { writeAudit } from "@/server/audit";
 import { requirePermission } from "@/server/authz";
 import { getDbOrNull } from "@/server/db";
+import { buildUserInviteEmail, sendUserInviteEmail } from "@/server/email";
 import { mapAppUser } from "@/server/access";
 
 const statusToPrisma: Record<AppUser["status"], "ACTIVE" | "INVITED" | "BLOCKED"> = {
@@ -12,6 +14,17 @@ const statusToPrisma: Record<AppUser["status"], "ACTIVE" | "INVITED" | "BLOCKED"
   "Convite pendente": "INVITED",
   Bloqueado: "BLOCKED",
 };
+
+function publicOrigin(request: Request) {
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  const forwardedProto = request.headers.get("x-forwarded-proto") ?? "https";
+  if (forwardedHost) return `${forwardedProto}://${forwardedHost}`;
+  return new URL(request.url).origin;
+}
+
+function inviteUrl(request: Request, token: string) {
+  return `${publicOrigin(request)}/convite/${token}`;
+}
 
 export async function GET() {
   const db = getDbOrNull();
@@ -81,5 +94,54 @@ export async function POST(request: Request) {
     after: { id: created.id, email: created.email, group: group.code, status: created.status },
   });
 
-  return NextResponse.json(mapAppUser(created), { status: 201 });
+  let inviteResult: Awaited<ReturnType<typeof sendUserInviteEmail>> | null = null;
+  if (created.status === "INVITED") {
+    await db.userInviteToken.updateMany({
+      where: { userId: created.id, usedAt: null, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7);
+    const invite = await db.userInviteToken.create({
+      data: {
+        token: randomBytes(32).toString("base64url"),
+        userId: created.id,
+        createdById: auth.user.id,
+        expiresAt,
+      },
+    });
+    const emailContent = buildUserInviteEmail({
+      name: created.name,
+      email: created.email,
+      groupName: group.name,
+      link: inviteUrl(request, invite.token),
+      expiresAt,
+    });
+    inviteResult = await sendUserInviteEmail({
+      to: created.email,
+      subject: emailContent.subject,
+      html: emailContent.html,
+      text: emailContent.text,
+      idempotencyKey: `user-invite/${invite.id}`,
+    });
+    await db.userInviteToken.update({
+      where: { id: invite.id },
+      data: {
+        emailStatus: inviteResult.status,
+        emailProviderId: inviteResult.status === "sent" ? inviteResult.providerId : null,
+        emailError: inviteResult.status === "sent" ? null : inviteResult.reason,
+        emailSentAt: inviteResult.status === "sent" ? new Date() : null,
+        emailLastAttemptAt: new Date(),
+        emailAttempts: { increment: 1 },
+      },
+    });
+    await writeAudit(db, {
+      action: inviteResult.status === "sent" ? "USER_INVITE_EMAIL_SENT" : "USER_INVITE_EMAIL_NOT_SENT",
+      entityType: "User",
+      entityId: created.id,
+      userId: auth.user.id,
+      after: { userEmail: created.email, inviteId: invite.id, email: inviteResult },
+    });
+  }
+
+  return NextResponse.json({ ...mapAppUser(created), inviteEmail: inviteResult }, { status: 201 });
 }
