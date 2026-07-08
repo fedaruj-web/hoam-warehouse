@@ -3023,10 +3023,47 @@ function downloadCsv(filename: string, rows: Record<string, string | number | nu
 
 function ReportsPage({ receivables, audits, cashMovements, fundingIssues }: { receivables: Receivable[]; audits: Audit[]; cashMovements: CashMovement[]; fundingIssues: FundingIssue[] }) {
   const portfolio = receivables.filter((item) => item.portfolioStatus || ["Comprado", "Vencido", "Liquidado"].includes(item.status));
+  const openPortfolio = portfolio.filter((item) => item.status !== "Liquidado");
+  const pipeline = receivables.filter((item) => !["Comprado", "Vencido", "Liquidado"].includes(item.status));
+  const portfolioFace = openPortfolio.reduce((sum, item) => sum + item.valor, 0);
+  const outstanding = openPortfolio.reduce((sum, item) => sum + (item.outstandingValue ?? item.valor), 0);
+  const acquisitionValue = openPortfolio.reduce((sum, item) => sum + (item.acquisitionValue ?? item.preco ?? priceReceivable(item).purchasePrice), 0);
+  const pipelineValue = pipeline.reduce((sum, item) => sum + item.valor, 0);
+  const issuedFunding = fundingIssues.filter((item) => item.status === "Emitido").reduce((sum, item) => sum + item.amount, 0);
+  const cashNet = cashMovements.reduce((sum, item) => sum + (item.type === "Entrada" ? item.amount : -item.amount), 0);
+  const overdue = openPortfolio.filter((item) => item.status === "Vencido" || daysFromToday(item.venc) < 0);
+  const avgPrice = portfolioFace ? acquisitionValue / portfolioFace : 0;
+  const topAssignorRows = concentrationRows(openPortfolio, "ced", []);
+  const topDebtorRows = concentrationRows(openPortfolio, "sac", []);
   const statusRows = ["Importado", "Elegível", "Revisão", "Inelegível", "Aprovado", "Comprado", "Vencido", "Liquidado"].map((status) => {
     const items = receivables.filter((item) => item.status === status);
     return { status, count: items.length, value: items.reduce((sum, item) => sum + item.valor, 0) };
   });
+  const exportExecutive = () => downloadCsv("hoam-sumario-executivo.csv", [
+    { indicador: "Carteira em aberto", valor: outstanding },
+    { indicador: "Valor de aquisição", valor: acquisitionValue },
+    { indicador: "Preço médio", valor: avgPrice },
+    { indicador: "Pipeline", valor: pipelineValue },
+    { indicador: "Funding emitido", valor: issuedFunding },
+    { indicador: "Uso do funding", valor: issuedFunding ? outstanding / issuedFunding : 0 },
+    { indicador: "Caixa líquido", valor: cashNet },
+    { indicador: "Ativos vencidos", valor: overdue.length },
+  ]);
+  const exportPipeline = () => downloadCsv("hoam-pipeline.csv", receivables.map((item) => ({
+    ativo: item.id,
+    cedente: item.ced,
+    sacado: item.sac,
+    emissao: item.emissao,
+    vencimento: item.venc,
+    valor: item.valor,
+    status: item.status,
+    confirmacao: item.confirmationStatus ?? "",
+    carteira: item.portfolioStatus ?? "",
+  })));
+  const exportConcentration = () => downloadCsv("hoam-concentracao.csv", [
+    ...topAssignorRows.map((item) => ({ dimensao: "Cedente", nome: item.name, exposicao: item.amount, percentual: item.ratio })),
+    ...topDebtorRows.map((item) => ({ dimensao: "Sacado", nome: item.name, exposicao: item.amount, percentual: item.ratio })),
+  ]);
   const exportPortfolio = () => downloadCsv("hoam-carteira.csv", portfolio.map((item) => ({
     ativo: item.id,
     cedente: item.ced,
@@ -3069,11 +3106,26 @@ function ReportsPage({ receivables, audits, cashMovements, fundingIssues }: { re
         <p className="muted">Exporte as principais visões operacionais em CSV com separador ponto e vírgula, pronto para Excel/Power BI.</p>
       </div>
       <div className="row-actions">
+        <button className="btn" onClick={exportExecutive}>Exportar sumário</button>
+        <button className="btn" disabled={!receivables.length} onClick={exportPipeline}>Exportar pipeline</button>
         <button className="btn" disabled={!portfolio.length} onClick={exportPortfolio}>Exportar carteira</button>
+        <button className="btn" disabled={!portfolio.length} onClick={exportConcentration}>Exportar concentração</button>
         <button className="btn" disabled={!cashMovements.length} onClick={exportCash}>Exportar caixa</button>
         <button className="btn" disabled={!fundingIssues.length} onClick={exportFunding}>Exportar funding</button>
         <button className="btn" disabled={!audits.length} onClick={exportAudits}>Exportar auditoria</button>
       </div>
+    </div>
+    <div className="kpis">
+      <K label="Carteira em aberto" v={fmt(outstanding)} />
+      <K label="Pipeline" v={fmt(pipelineValue)} />
+      <K label="Preço médio" v={fmtPct(avgPrice)} />
+      <K label="Uso do funding" v={issuedFunding ? fmtPct(outstanding / issuedFunding) : "Sem emissão"} />
+    </div>
+    <div className="report-command-grid">
+      <div><span>Caixa líquido</span><b>{fmt(cashNet)}</b><small>{cashMovements.length} movimento(s)</small></div>
+      <div><span>Ativos vencidos</span><b>{overdue.length}</b><small>{fmt(overdue.reduce((sum, item) => sum + (item.outstandingValue ?? item.valor), 0))}</small></div>
+      <div><span>Audit logs</span><b>{audits.length}</b><small>Trilha operacional disponível</small></div>
+      <div><span>Funding ativo</span><b>{fmt(issuedFunding)}</b><small>{fundingIssues.filter((item) => item.status === "Emitido").length} emissão(ões)</small></div>
     </div>
     <div className="grid">
       <div className="card"><div className="ctitle">Gestão de caixa</div><Table heads={["Data", "Conta", "Descrição", "Tipo", "Valor"]}>{cashMovements.map((c) => <tr key={c.id}><td>{c.date}</td><td>{c.accountName || c.accountId || "-"}</td><td>{c.description}</td><td><Badge v={c.type} /></td><td className="mono">{fmt(c.amount)}</td></tr>)}</Table></div>
@@ -3084,6 +3136,21 @@ function ReportsPage({ receivables, audits, cashMovements, fundingIssues }: { re
         <div className="ctitle">Exposição por status</div>
         <Table heads={["Status", "Quantidade", "Exposição"]}>
           {statusRows.map((row) => <tr key={row.status}><td><Badge v={row.status} /></td><td>{row.count}</td><td className="mono">{fmt(row.value)}</td></tr>)}
+        </Table>
+      </div>
+      <div className="card">
+        <div className="ctitle">Concentração de carteira</div>
+        <Table heads={["Dimensão", "Nome", "Exposição", "% carteira"]}>
+          {topAssignorRows.slice(0, 4).map((row) => <tr key={`ced-${row.name}`}><td>Cedente</td><td>{row.name}</td><td>{fmt(row.amount)}</td><td>{fmtPct(row.ratio)}</td></tr>)}
+          {topDebtorRows.slice(0, 4).map((row) => <tr key={`sac-${row.name}`}><td>Sacado</td><td>{row.name}</td><td>{fmt(row.amount)}</td><td>{fmtPct(row.ratio)}</td></tr>)}
+        </Table>
+      </div>
+    </div>
+    <div className="grid">
+      <div className="card">
+        <div className="ctitle">Pipeline operacional</div>
+        <Table heads={["Status", "Quantidade", "Valor", "% total"]}>
+          {statusRows.map((row) => <tr key={`pipe-${row.status}`}><td><Badge v={row.status} /></td><td>{row.count}</td><td>{fmt(row.value)}</td><td>{fmtPct(receivables.reduce((sum, item) => sum + item.valor, 0) ? row.value / receivables.reduce((sum, item) => sum + item.valor, 0) : 0)}</td></tr>)}
         </Table>
       </div>
       <div className="card"><div className="ctitle">Últimos audit logs</div><div className="audit-list">{audits.slice(0, 7).map((a) => <div className="audit" key={a.id}><span className="mono">{a.id}</span><b>{a.action}</b><small>{a.entity} · {a.user} · {a.at}</small></div>)}</div></div>

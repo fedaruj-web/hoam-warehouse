@@ -790,6 +790,36 @@
   margin-right: 5px;
 }
 
+.report-command-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 16px;
+}
+
+.report-command-grid div {
+  background: linear-gradient(145deg, rgba(201, 164, 93, 0.1), rgba(255, 255, 255, 0.03));
+  border: 1px solid rgba(201, 164, 93, 0.18);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.report-command-grid span,
+.report-command-grid small {
+  color: #8f969f;
+  display: block;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.report-command-grid b {
+  color: #fff;
+  display: block;
+  font-family: var(--mono);
+  font-size: 18px;
+  margin: 5px 0;
+}
+
 @media (max-width: 1100px) {
   .metric-grid,
   .pipeline-summary,
@@ -801,7 +831,8 @@
   .alert-command,
   .alert-area-grid,
   .access-command,
-  .access-command-grid {
+  .access-command-grid,
+  .report-command-grid {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -822,7 +853,8 @@
   .alert-command,
   .alert-area-grid,
   .access-command,
-  .access-command-grid {
+  .access-command-grid,
+  .report-command-grid {
     grid-template-columns: 1fr;
   }
 
