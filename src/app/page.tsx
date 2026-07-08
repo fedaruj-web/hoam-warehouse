@@ -1592,34 +1592,70 @@ function AlertsPage({ checklists, entries, fundingIssues, receivables }: { check
   const divergentReconciliation = entries.filter((item) => item.status === "Divergente");
   const overdue = openPortfolio.filter((item) => item.status === "Vencido" || daysFromToday(item.venc) < 0);
   const review = receivables.filter((item) => item.status === "Revisão" || item.status === "Inelegível");
+  const readyForPurchase = receivables.filter((item) => ["Elegível", "Aprovado"].includes(item.status));
+  const priorityScore: Record<string, number> = { Crítico: 100, Alto: 75, Médio: 50, Baixo: 25 };
   const alerts = [
-    ...overdue.map((item) => ({ priority: "Crítico", area: "Cobrança", title: `Ativo vencido ${item.id}`, detail: `${item.sac} · ${fmt(item.outstandingValue ?? item.valor)}`, action: "Registrar cobrança ou liquidação" })),
-    ...divergentReconciliation.map((item) => ({ priority: "Crítico", area: "Caixa", title: `Divergência de extrato ${item.id}`, detail: `${item.accountName ?? item.accountId} · ${fmt(item.amount)}`, action: "Investigar diferença com banco/razão" })),
-    ...pendingDocs.map((item) => ({ priority: "Alto", area: "Documentos", title: `Pendência documental ${item.receivableId}`, detail: item.gaps.map((gap) => gap.label).join(" · "), action: "Regularizar antes de compra" })),
-    ...pendingReconciliation.map((item) => ({ priority: "Médio", area: "Caixa", title: `Extrato pendente ${item.id}`, detail: `${item.description} · ${fmt(item.amount)}`, action: "Conciliar com movimento de caixa" })),
-    ...review.map((item) => ({ priority: "Médio", area: "Crédito", title: `Ativo em revisão ${item.id}`, detail: `${item.ced} → ${item.sac}`, action: "Enviar para comitê ou ajustar documentação" })),
-  ];
+    ...overdue.map((item) => ({ priority: "Crítico", area: "Cobrança", owner: "Cobrança", sla: "Hoje", amount: item.outstandingValue ?? item.valor, title: `Ativo vencido ${item.id}`, detail: `${item.sac} · venc. ${item.venc}`, action: "Registrar cobrança, evidência ou liquidação" })),
+    ...divergentReconciliation.map((item) => ({ priority: "Crítico", area: "Caixa", owner: "Tesouraria", sla: "Hoje", amount: item.amount, title: `Divergência de extrato ${item.id}`, detail: `${item.accountName ?? item.accountId} · ${item.description}`, action: "Investigar diferença com banco/razão" })),
+    ...pendingDocs.map((item) => ({ priority: "Alto", area: "Documentos", owner: "Cadastro/Compliance", sla: "D+1", amount: receivables.find((asset) => asset.id === item.receivableId)?.valor ?? 0, title: `Pendência documental ${item.receivableId}`, detail: item.gaps.map((gap) => gap.label).join(" · "), action: "Regularizar antes de compra" })),
+    ...readyForPurchase.filter((item) => !pendingDocs.some((doc) => doc.receivableId === item.id)).map((item) => ({ priority: "Alto", area: "Compra", owner: "Operações", sla: "D+1", amount: item.valor, title: `Ativo pronto para compra ${item.id}`, detail: `${item.ced} → ${item.sac}`, action: "Simular boleta/apreçamento e enviar para compra" })),
+    ...pendingReconciliation.map((item) => ({ priority: "Médio", area: "Caixa", owner: "Tesouraria", sla: "D+2", amount: item.amount, title: `Extrato pendente ${item.id}`, detail: `${item.description} · ${fmt(item.amount)}`, action: "Conciliar com movimento de caixa" })),
+    ...review.map((item) => ({ priority: "Médio", area: "Crédito", owner: "Risco", sla: "D+2", amount: item.valor, title: `Ativo em revisão ${item.id}`, detail: `${item.ced} → ${item.sac}`, action: "Enviar para comitê ou ajustar documentação" })),
+  ].sort((a, b) => (priorityScore[b.priority] + b.amount / 1000000) - (priorityScore[a.priority] + a.amount / 1000000));
   if (issuedFunding > 0 && openExposure / issuedFunding > 0.9) {
-    alerts.unshift({ priority: "Crítico", area: "Funding", title: "Uso de funding acima de 90%", detail: `${fmt(openExposure)} / ${fmt(issuedFunding)}`, action: "Reduzir compras ou estruturar nova emissão" });
+    alerts.unshift({ priority: "Crítico", area: "Funding", owner: "Capital Markets", sla: "Hoje", amount: Math.max(0, openExposure - issuedFunding * 0.9), title: "Uso de funding acima de 90%", detail: `${fmt(openExposure)} / ${fmt(issuedFunding)}`, action: "Reduzir compras ou estruturar nova emissão" });
   }
   const critical = alerts.filter((item) => item.priority === "Crítico").length;
   const high = alerts.filter((item) => item.priority === "Alto").length;
   const medium = alerts.filter((item) => item.priority === "Médio").length;
+  const amountAtRisk = alerts.reduce((sum, item) => sum + item.amount, 0);
+  const areaSummary = alerts.reduce<Record<string, { count: number; amount: number; critical: number }>>((acc, alert) => {
+    const current = acc[alert.area] ?? { count: 0, amount: 0, critical: 0 };
+    current.count += 1;
+    current.amount += alert.amount;
+    current.critical += alert.priority === "Crítico" ? 1 : 0;
+    acc[alert.area] = current;
+    return acc;
+  }, {});
+  const firstAction = alerts[0];
   return <>
     <div className="kpis">
       <K label="Alertas críticos" v={String(critical)} />
       <K label="Alta prioridade" v={String(high)} />
-      <K label="Média prioridade" v={String(medium)} />
-      <K label="Pendências totais" v={String(alerts.length)} />
+      <K label="Valor monitorado" v={fmt(amountAtRisk)} />
+      <K label="Pendências totais" v={`${alerts.length} (${medium} médias)`} />
+    </div>
+    <div className="card alert-command">
+      <div>
+        <div className="ctitle">Comando executivo</div>
+        <p className="muted">Fila única de prioridades cruzando cobrança, caixa, documentos, risco, compra e funding.</p>
+      </div>
+      <div className="alert-command-next">
+        <span>Próxima melhor ação</span>
+        <b>{firstAction?.title ?? "Sem ação pendente"}</b>
+        <small>{firstAction ? `${firstAction.owner} · ${firstAction.sla} · ${firstAction.action}` : "Operação sem pendências críticas."}</small>
+      </div>
+    </div>
+    <div className="alert-area-grid">
+      {Object.entries(areaSummary).map(([area, summary]) => (
+        <div key={area}>
+          <span>{area}</span>
+          <b>{summary.count}</b>
+          <small>{fmt(summary.amount)} · {summary.critical} crítico(s)</small>
+        </div>
+      ))}
     </div>
     <div className="grid">
       <div className="card">
         <div className="ctitle">Fila executiva</div>
-        <Table heads={["Prioridade", "Área", "Pendência", "Detalhe", "Ação recomendada"]}>
+        <Table heads={["Prioridade", "Área", "Dono", "SLA", "Valor", "Pendência", "Detalhe", "Ação recomendada"]}>
           {alerts.map((alert, index) => (
             <tr key={`${alert.title}-${index}`}>
               <td><Badge v={alert.priority} /></td>
               <td>{alert.area}</td>
+              <td>{alert.owner}</td>
+              <td className="mono">{alert.sla}</td>
+              <td className="mono">{fmt(alert.amount)}</td>
               <td>{alert.title}</td>
               <td>{alert.detail}</td>
               <td>{alert.action}</td>
@@ -1631,10 +1667,10 @@ function AlertsPage({ checklists, entries, fundingIssues, receivables }: { check
       <div className="card">
         <div className="ctitle">Rotina de acompanhamento</div>
         {[
-          "Críticos devem ser endereçados antes de novas compras.",
-          "Pendências documentais bloqueiam compra quando aplicável.",
-          "Divergência de extrato exige conciliação manual ou justificativa.",
-          "Funding acima do limite de uso deve ir para decisão executiva.",
+          "Críticos devem ter dono e SLA para o mesmo dia.",
+          "Compras só avançam quando documentos mínimos e caixa estiverem endereçados.",
+          "Divergência de extrato exige conciliação manual ou justificativa auditável.",
+          "Funding acima do limite de uso deve ir para decisão executiva antes de novas compras.",
         ].map((rule) => <div className="rule" key={rule}>{rule}<Check size={14} color="#70c69a" /></div>)}
       </div>
     </div>
