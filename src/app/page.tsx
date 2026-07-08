@@ -3098,10 +3098,89 @@ function Assets({ ds, owned }: { ds: Receivable[]; owned: string[] }) {
 function AccessControl({ audits, groups, onToggle, users }: { audits: Audit[]; groups: AccessGroup[]; onToggle: (groupId: string, module: string, action: PermissionAction) => void; users: AppUser[] }) {
   const [selected, setSelected] = useState(groups[0].id);
   const activeGroup = groups.find((g) => g.id === selected) ?? groups[0];
+  const permissionCount = (group: AccessGroup) => Object.values(group.permissions).reduce((sum, permissions) => sum + permissions.length, 0);
+  const groupRisks = groups.map((group) => {
+    const canApproveCredit = group.permissions["Comitê"]?.includes("approve") || group.permissions["Risco"]?.includes("approve");
+    const canBuy = group.permissions["Compra"]?.includes("purchase") || group.permissions["Compra"]?.includes("create");
+    const canAdmin = modules.some((module) => group.permissions[module]?.includes("admin"));
+    const canEditUsers = group.permissions["Usuários"]?.includes("admin") || group.permissions["Usuários"]?.includes("create");
+    const canEditCash = group.permissions["Caixa"]?.includes("create") || group.permissions["Caixa"]?.includes("admin");
+    const canReconcile = group.permissions["Caixa"]?.includes("approve") || group.permissions["Caixa"]?.includes("admin");
+    const risks = [
+      canApproveCredit && canBuy ? "Aprova crédito e compra ativos" : "",
+      canEditCash && canReconcile ? "Lança e aprova/conciliaria caixa" : "",
+      canEditUsers && canAdmin ? "Administra usuários e possui poderes administrativos" : "",
+      permissionCount(group) > modules.length * 3 ? "Perfil muito amplo" : "",
+    ].filter(Boolean);
+    const severity = group.id === "admin" || risks.length >= 2 ? "Crítico" : risks.length === 1 ? "Alto" : "Baixo";
+    return { group, risks, severity, permissionCount: permissionCount(group) };
+  });
+  const selectedRisk = groupRisks.find((item) => item.group.id === activeGroup.id) ?? groupRisks[0];
+  const privilegedGroups = groupRisks.filter((item) => item.severity !== "Baixo");
+  const privilegedUsers = users.filter((user) => {
+    const risk = groupRisks.find((item) => item.group.id === user.groupId);
+    return risk?.severity !== "Baixo";
+  });
+  const inactiveOrInvited = users.filter((user) => user.status !== "Ativo");
+  const accessAudits = audits.filter((audit) => /USER|PERMISSION|ACCESS|LOGIN|LOGOUT|AUTH|GROUP/i.test(`${audit.action} ${audit.entity}`));
   return <>
-    <div className="kpis"><K label="Usuários ativos" v={String(users.filter((u) => u.status === "Ativo").length)} /><K label="Grupos de acesso" v={String(groups.length)} /><K label="Permissões mapeadas" v={String(modules.length * actions.length)} /><K label="Convites pendentes" v={String(users.filter((u) => u.status.includes("pendente")).length)} /></div>
-    <div className="grid access-grid"><div className="card"><div className="ctitle">Usuários corporativos</div><Table heads={["Usuário", "Grupo", "Status", "Último acesso"]}>{users.map((user) => <tr key={user.id}><td><div className="entity">{user.name}</div><div className="sub">{user.email}</div></td><td>{groups.find((g) => g.id === user.groupId)?.name}</td><td><Badge v={user.status} /></td><td className="mono">{user.lastAccess}</td></tr>)}</Table></div><div className="card"><div className="ctitle">Grupos e segregação de funções</div><div className="group-list">{groups.map((group) => <button className={selected === group.id ? "group active" : "group"} key={group.id} onClick={() => setSelected(group.id)}><span><b>{group.name}</b><small>{group.description}</small></span><em>{group.users}</em></button>)}</div></div></div>
-    <div className="grid access-grid"><div className="card"><div className="ctitle">Matriz de permissões · {activeGroup.name}{activeGroup.id === "admin" && <span> · perfil protegido</span>}</div><div className="permission-matrix"><div className="permission-row permission-head"><b>Módulo</b>{actions.map((action) => <b key={action.key}>{action.label}</b>)}</div>{modules.map((module) => <div className="permission-row" key={module}><span>{module}</span>{actions.map((action) => <label className="checkcell" key={action.key}><input checked={activeGroup.permissions[module]?.includes(action.key) ?? false} disabled={activeGroup.id === "admin"} onChange={() => onToggle(activeGroup.id, module, action.key)} type="checkbox" /><i /></label>)}</div>)}</div></div><div className="card"><div className="ctitle">Audit log de acessos</div><div className="audit-list">{audits.slice(0, 8).map((audit) => <div className="audit" key={audit.id}><span className="mono">{audit.id}</span><b>{audit.action}</b><small>{audit.entity} · {audit.user} · {audit.at}</small></div>)}</div></div></div>
+    <div className="kpis"><K label="Usuários ativos" v={String(users.filter((u) => u.status === "Ativo").length)} /><K label="Usuários privilegiados" v={String(privilegedUsers.length)} /><K label="Grupos com risco SoD" v={String(privilegedGroups.length)} /><K label="Convites/bloqueados" v={String(inactiveOrInvited.length)} /></div>
+    <div className="card access-command">
+      <div>
+        <div className="ctitle">Comando de acessos</div>
+        <p className="muted">Governança de perfis, segregação de funções e revisão de poderes críticos.</p>
+      </div>
+      <div className="access-command-grid">
+        <div><span>Permissões disponíveis</span><b>{modules.length * actions.length}</b><small>{modules.length} módulos · {actions.length} ações</small></div>
+        <div><span>Grupo selecionado</span><b>{activeGroup.name}</b><small>{selectedRisk?.permissionCount ?? 0} permissões ativas</small></div>
+        <div><span>Risco do grupo</span><b>{selectedRisk?.severity ?? "Baixo"}</b><small>{selectedRisk?.risks[0] ?? "Sem conflito material"}</small></div>
+      </div>
+    </div>
+    <div className="grid access-grid">
+      <div className="card">
+        <div className="ctitle">Usuários corporativos</div>
+        <Table heads={["Usuário", "Grupo", "Risco", "Status", "Último acesso"]}>
+          {users.map((user) => {
+            const group = groups.find((item) => item.id === user.groupId);
+            const risk = groupRisks.find((item) => item.group.id === user.groupId);
+            return (
+              <tr key={user.id}>
+                <td><div className="entity">{user.name}</div><div className="sub">{user.email}</div></td>
+                <td>{group?.name ?? "Sem grupo"}</td>
+                <td><Badge v={risk?.severity ?? "Baixo"} /><div className="sub">{risk?.risks[0] ?? "Perfil regular"}</div></td>
+                <td><Badge v={user.status} /></td>
+                <td className="mono">{user.lastAccess}</td>
+              </tr>
+            );
+          })}
+        </Table>
+      </div>
+      <div className="card">
+        <div className="ctitle">Grupos e segregação de funções</div>
+        <div className="group-list">{groups.map((group) => {
+          const risk = groupRisks.find((item) => item.group.id === group.id);
+          return <button className={selected === group.id ? "group active" : "group"} key={group.id} onClick={() => setSelected(group.id)}><span><b>{group.name}</b><small>{group.description}</small><small><Badge v={risk?.severity ?? "Baixo"} /> {risk?.permissionCount ?? 0} permissão(ões)</small></span><em>{group.users}</em></button>;
+        })}</div>
+      </div>
+    </div>
+    <div className="grid access-grid">
+      <div className="card">
+        <div className="ctitle">Matriz de permissões · {activeGroup.name}{activeGroup.id === "admin" && <span> · perfil protegido</span>}</div>
+        <div className="access-risk-box">
+          <Badge v={selectedRisk?.severity ?? "Baixo"} />
+          <span>{selectedRisk?.risks.length ? selectedRisk.risks.join(" · ") : "Nenhum conflito de segregação material identificado para este grupo."}</span>
+        </div>
+        <div className="permission-matrix"><div className="permission-row permission-head"><b>Módulo</b>{actions.map((action) => <b key={action.key}>{action.label}</b>)}</div>{modules.map((module) => <div className="permission-row" key={module}><span>{module}</span>{actions.map((action) => <label className="checkcell" key={action.key}><input checked={activeGroup.permissions[module]?.includes(action.key) ?? false} disabled={activeGroup.id === "admin"} onChange={() => onToggle(activeGroup.id, module, action.key)} type="checkbox" /><i /></label>)}</div>)}</div>
+      </div>
+      <div className="card">
+        <div className="ctitle">Riscos de acesso e auditoria</div>
+        <Table heads={["Grupo", "Risco", "Achados"]}>
+          {groupRisks.map((item) => <tr key={item.group.id}><td>{item.group.name}</td><td><Badge v={item.severity} /></td><td>{item.risks.length ? item.risks.join(" · ") : "Sem conflito material"}</td></tr>)}
+        </Table>
+        <div className="ctitle">Audit log de acessos</div>
+        <div className="audit-list">{(accessAudits.length ? accessAudits : audits).slice(0, 8).map((audit) => <div className="audit" key={audit.id}><span className="mono">{audit.id}</span><b>{audit.action}</b><small>{audit.entity} · {audit.user} · {audit.at}</small></div>)}</div>
+      </div>
+    </div>
   </>;
 }
 
