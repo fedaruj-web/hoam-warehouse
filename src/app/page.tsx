@@ -2288,6 +2288,15 @@ function PortfolioPage({ owned, softDelete, canDelete }: { receivables: Receivab
 }
 
 function daysFromToday(value: string) {
+  if (value.includes("-")) {
+    const dueIso = new Date(value);
+    if (!Number.isNaN(dueIso.getTime())) {
+      const today = new Date();
+      const base = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()));
+      const due = new Date(Date.UTC(dueIso.getFullYear(), dueIso.getMonth(), dueIso.getDate()));
+      return Math.ceil((due.getTime() - base.getTime()) / 86_400_000);
+    }
+  }
   const [day, month, year] = value.split("/").map(Number);
   const due = new Date(Date.UTC(year, (month ?? 1) - 1, day ?? 1));
   const today = new Date();
@@ -2792,6 +2801,28 @@ function DocumentsPage({ checklists, documents, canCreate, onAdd, onNotice }: { 
   const valid = documents.filter((d) => d.status === "Válido").length;
   const expired = documents.filter((d) => d.status === "Vencido").length;
   const review = documents.filter((d) => d.status === "Em revisão" || d.status === "Pendente").length;
+  const documentHealth = documents.map((doc) => {
+    const days = doc.expiresAt ? daysFromToday(doc.expiresAt) : null;
+    const hasBinary = doc.size !== "Metadado" && doc.size !== "0 MB";
+    const missingGovernance = !doc.stage || !doc.requirement;
+    const status =
+      doc.status === "Vencido" || (days !== null && days < 0) ? "Vencido" :
+      days !== null && days <= 30 ? "Vence em breve" :
+      doc.status === "Pendente" || doc.status === "Em revisão" ? "Em revisão" :
+      missingGovernance ? "Classificar" :
+      !hasBinary ? "Sem arquivo" :
+      "Válido";
+    const severity = status === "Vencido" ? "Crítico" : status === "Vence em breve" || status === "Sem arquivo" ? "Alto" : status === "Em revisão" || status === "Classificar" ? "Médio" : "Baixo";
+    const impact = doc.requirement === "KYC_CEDENTE" || doc.requirement === "PROCURACAO" || doc.requirement === "CONTRATO_CESSAO"
+      ? "Bloqueia cadastro/compra"
+      : doc.requirement === "COMPROVANTE_LASTRO" || doc.requirement === "EVIDENCIA_CONFIRMACAO" || doc.requirement === "COMPROVANTE_PAGAMENTO"
+        ? "Bloqueia ou condiciona compra"
+        : "Governança / auditoria";
+    return { doc, days, hasBinary, missingGovernance, status, severity, impact };
+  });
+  const expiringSoon = documentHealth.filter((item) => item.status === "Vence em breve").length;
+  const withoutFile = documentHealth.filter((item) => item.status === "Sem arquivo").length;
+  const classified = documents.filter((doc) => doc.stage && doc.requirement).length;
   const completion = Math.round((checklists.filter((item) => item.ok).length / Math.max(checklists.length, 1)) * 100);
   const dossiers = checklists.map((item) => {
     const linkedDocs = documents.filter((doc) => doc.entity === item.receivableId || doc.entity.includes(item.receivableId));
@@ -2849,7 +2880,18 @@ function DocumentsPage({ checklists, documents, canCreate, onAdd, onNotice }: { 
   }
 
   return <>
-    <div className="kpis"><K label="Documentos" v={String(documents.length)} /><K label="Dossiês completos" v={`${completion}%`} /><K label="Pendências" v={String(pending.length)} /><K label="Vencidos" v={String(expired)} /></div>
+    <div className="kpis"><K label="Documentos" v={String(documents.length)} /><K label="Dossiês completos" v={`${completion}%`} /><K label="Vencendo em 30 dias" v={String(expiringSoon)} /><K label="Críticos" v={String(expired + withoutFile)} /></div>
+    <div className="card document-command">
+      <div>
+        <div className="ctitle">Comando documental</div>
+        <p className="muted">Controle de validade, classificação e impacto operacional dos documentos usados em cadastro, compra, carteira e auditoria.</p>
+      </div>
+      <div className="document-command-grid">
+        <div><span>Classificados</span><b>{classified}/{documents.length}</b><small>Etapa e requisito preenchidos</small></div>
+        <div><span>Sem arquivo</span><b>{withoutFile}</b><small>Metadado cadastrado sem binário</small></div>
+        <div><span>Em revisão</span><b>{review}</b><small>Exigem validação operacional</small></div>
+      </div>
+    </div>
     <div className="grid">
       <div className="card">
         <div className="ctitle">Dossiês por ativo</div>
@@ -2874,6 +2916,26 @@ function DocumentsPage({ checklists, documents, canCreate, onAdd, onNotice }: { 
         <div className="rule">Vencidos<b>{expired}</b></div>
         {Object.entries(byStage).map(([stage, count]) => <div className="rule" key={stage}>{stage}<b>{count}</b></div>)}
       </div>
+    </div>
+    <div className="card">
+      <div className="ctitle">Alertas de validade e governança</div>
+      <Table heads={["Documento", "Vínculo", "Validade", "Arquivo", "Criticidade", "Impacto", "Ação recomendada"]}>
+        {documentHealth
+          .filter((item) => item.severity !== "Baixo")
+          .sort((a, b) => ["Crítico", "Alto", "Médio", "Baixo"].indexOf(a.severity) - ["Crítico", "Alto", "Médio", "Baixo"].indexOf(b.severity))
+          .map(({ doc, days, hasBinary, missingGovernance, status, severity, impact }) => (
+            <tr key={doc.id}>
+              <td><div className="entity">{doc.name}</div><div className="sub mono">{doc.id}</div></td>
+              <td>{doc.entity}</td>
+              <td>{days === null ? "Sem vencimento" : days < 0 ? `${Math.abs(days)} dia(s) vencido` : `${days} dia(s)`}<div className="sub">{doc.expiresAt || "Sem data"}</div></td>
+              <td><Badge v={hasBinary ? "Arquivo OK" : "Sem arquivo"} /></td>
+              <td><Badge v={severity} /><div className="sub">{status}</div></td>
+              <td>{impact}</td>
+              <td>{missingGovernance ? "Classificar etapa/requisito" : !hasBinary ? "Fazer upload do arquivo" : days !== null && days <= 30 ? "Renovar documento" : "Validar status documental"}</td>
+            </tr>
+          ))}
+      </Table>
+      {!documentHealth.some((item) => item.severity !== "Baixo") && <div className="note">Nenhum alerta documental relevante.</div>}
     </div>
     <div className="card">
       <div className="ctitle">Pendências obrigatórias</div>
@@ -2905,7 +2967,7 @@ function DocumentsPage({ checklists, documents, canCreate, onAdd, onNotice }: { 
         ))}
       </Table>
     </div>
-    <div className="card"><div className="ctitle">Repositório documental {canCreate && <button className="mini" onClick={onAdd}>Adicionar</button>}</div><Table heads={["Código", "Documento", "Tipo", "Etapa / requisito", "Vínculo", "Status", "Vencimento", "Arquivo"]}>{documents.map((doc) => <tr key={doc.id}><td className="mono">{doc.id}</td><td><div className="entity">{doc.name}</div><div className="sub">{doc.uploadedAt} · {doc.size}</div></td><td>{doc.type}</td><td><div className="entity">{doc.stage || "Sem etapa"}</div><div className="sub">{doc.requirement || "Sem requisito"}</div></td><td>{doc.entity}</td><td><Badge v={doc.status} /></td><td>{doc.expiresAt || "Sem vencimento"}</td><td><div className="row-actions"><label className="btn file-action">{uploadingDoc === doc.id ? "Enviando..." : "Upload"}<input hidden type="file" onChange={(event) => uploadDocumentFile(doc.id, event.target.files?.[0])} /></label><button className="btn" onClick={() => openSignedDocument(doc.id)}>Download</button></div></td></tr>)}</Table></div>
+    <div className="card"><div className="ctitle">Repositório documental {canCreate && <button className="mini" onClick={onAdd}>Adicionar</button>}</div><Table heads={["Código", "Documento", "Tipo", "Etapa / requisito", "Vínculo", "Status", "Vencimento", "Governança", "Arquivo"]}>{documentHealth.map(({ doc, status, severity, hasBinary }) => <tr key={doc.id}><td className="mono">{doc.id}</td><td><div className="entity">{doc.name}</div><div className="sub">{doc.uploadedAt} · {doc.size}</div></td><td>{doc.type}</td><td><div className="entity">{doc.stage || "Sem etapa"}</div><div className="sub">{doc.requirement || "Sem requisito"}</div></td><td>{doc.entity}</td><td><Badge v={doc.status} /></td><td>{doc.expiresAt || "Sem vencimento"}</td><td><Badge v={severity} /><div className="sub">{status} · {hasBinary ? "arquivo OK" : "sem arquivo"}</div></td><td><div className="row-actions"><label className="btn file-action">{uploadingDoc === doc.id ? "Enviando..." : "Upload"}<input hidden type="file" onChange={(event) => uploadDocumentFile(doc.id, event.target.files?.[0])} /></label><button className="btn" onClick={() => openSignedDocument(doc.id)}>Download</button></div></td></tr>)}</Table></div>
   </>;
 }
 
@@ -3472,8 +3534,8 @@ function Table({ heads, children }: { heads: string[]; children: ReactNode }) {
 }
 
 function Badge({ v }: { v: string }) {
-  const warn = ["Revisão", "Em análise", "Monitorar", "Convite pendente", "Com erros", "Em revisão", "Estruturando", "Pendente", "Sem resposta", "Atenção", "Liquidação parcial", "Renegociado", "Alto", "Médio", "Rascunho", "Em aprovação"].includes(v);
-  const danger = ["Bloqueado", "Inelegível", "Vencido", "Divergente", "Em cobrança", "Crítico", "Reprovada", "Cancelada"].includes(v);
+  const warn = ["Revisão", "Em análise", "Monitorar", "Convite pendente", "Com erros", "Em revisão", "Estruturando", "Pendente", "Sem resposta", "Atenção", "Liquidação parcial", "Renegociado", "Alto", "Médio", "Rascunho", "Em aprovação", "Vence em breve", "Classificar", "Sem arquivo"].includes(v);
+  const danger = ["Bloqueado", "Inelegível", "Vencido", "Divergente", "Em cobrança", "Crítico", "Crítica", "Reprovada", "Cancelada"].includes(v);
   return <span className={danger ? "badge danger" : warn ? "badge warn" : "badge"}>{v}</span>;
 }
 
