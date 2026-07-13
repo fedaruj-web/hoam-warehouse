@@ -1961,7 +1961,15 @@ function CessionJourneyPage({
   const weightedRate = faceValue ? readyRows.reduce((sum, row) => sum + row.pricing.annualRate * row.item.valor, 0) / faceValue : annualRate / 100;
   const purchaseAccount = cashAccounts.find((account) => account.purpose === "PURCHASE_SETTLEMENT" && account.status === "Ativa" && !account.deletedAt);
   const fundingCapacity = fundingIssues.filter((issue) => issue.status !== "Liquidado").reduce((sum, issue) => sum + issue.amount, 0);
+  const issuedFundingCapacity = fundingIssues.filter((issue) => issue.status === "Emitido").reduce((sum, issue) => sum + issue.amount, 0);
+  const structuringFundingCapacity = fundingIssues.filter((issue) => issue.status === "Estruturando").reduce((sum, issue) => sum + issue.amount, 0);
   const cashCoverage = purchaseValue ? (purchaseAccount?.balance ?? 0) / purchaseValue : 0;
+  const settlementCash = purchaseAccount?.balance ?? 0;
+  const availableSettlementLiquidity = settlementCash + issuedFundingCapacity;
+  const liquidityCoverage = purchaseValue ? availableSettlementLiquidity / purchaseValue : 0;
+  const settlementGap = Math.max(purchaseValue - availableSettlementLiquidity, 0);
+  const postSettlementCash = settlementCash - purchaseValue;
+  const financeStatus = !purchaseValue ? "Aguardando lote" : !purchaseAccount ? "Sem conta" : settlementGap <= 0 ? "Pronto para liquidar" : structuringFundingCapacity >= settlementGap ? "Funding em estruturação" : "Gap aberto";
   const latestBatch = batches[0];
   const activeAssignors = assignors.filter((item) => !item.deletedAt);
   const activeDebtors = debtors.filter((item) => !item.deletedAt);
@@ -2131,6 +2139,43 @@ function CessionJourneyPage({
     void navigator.clipboard?.writeText(memo);
     onNotice("Resumo do dossiê copiado para a área de transferência.");
   }
+  const financeRows = [
+    {
+      label: "Conta de liquidação",
+      value: purchaseAccount ? purchaseAccount.name : "Não configurada",
+      detail: purchaseAccount ? `${purchaseAccount.bankName ?? "Banco não informado"} · ${purchaseAccount.accountNumber ?? purchaseAccount.id}` : "Cadastre uma conta ativa com finalidade PURCHASE_SETTLEMENT",
+      status: purchaseAccount ? "OK" : "Pendente",
+      run: () => setView("caixa"),
+    },
+    {
+      label: "Caixa disponível",
+      value: fmt(settlementCash),
+      detail: purchaseAccount ? `Saldo projetado após compra: ${fmt(postSettlementCash)}` : "Sem conta de liquidação vinculada",
+      status: settlementCash >= purchaseValue || !purchaseValue ? "OK" : "Atenção",
+      run: () => setView("caixa"),
+    },
+    {
+      label: "Funding emitido",
+      value: fmt(issuedFundingCapacity),
+      detail: `${fundingIssues.filter((issue) => issue.status === "Emitido").length} emissão(ões) disponível(is)`,
+      status: issuedFundingCapacity ? "OK" : "Atenção",
+      run: () => setView("funding"),
+    },
+    {
+      label: "Funding em estruturação",
+      value: fmt(structuringFundingCapacity),
+      detail: `${fundingIssues.filter((issue) => issue.status === "Estruturando").length} instrumento(s) em andamento`,
+      status: structuringFundingCapacity ? "Monitorar" : "Sem pipeline",
+      run: () => setView("funding"),
+    },
+    {
+      label: "Gap para liquidação",
+      value: fmt(settlementGap),
+      detail: settlementGap ? `Cobertura consolidada: ${fmtPct(liquidityCoverage)}` : "Liquidez suficiente para o lote pronto",
+      status: settlementGap ? "Crítico" : "OK",
+      run: () => setView(settlementGap ? "funding" : "compra"),
+    },
+  ];
   const blockerPlaybook: Record<string, { owner: string; sla: string; action: string; view?: View; modal?: Modal }> = {
     "Cedente ativo": { owner: "Cadastro", sla: "D+1", action: "Regularizar cadastro do cedente", view: "cedentes" },
     "Sacado ativo": { owner: "Cadastro", sla: "D+1", action: "Completar cadastro e contatos do sacado", view: "sacados" },
@@ -2340,6 +2385,36 @@ function CessionJourneyPage({
               <td>{row.evidence}</td>
               <td>{row.owner}</td>
               <td><button className="mini" onClick={row.run}>{row.action}</button></td>
+            </tr>
+          ))}
+        </Table>
+      </div>
+      <div className="card settlement-bridge">
+        <div className="settlement-head">
+          <div>
+            <div className="ctitle">Fechamento financeiro da cessão</div>
+            <p className="muted">Concilia valor de compra, conta de liquidação e funding antes da entrada dos ativos na carteira.</p>
+          </div>
+          <div className="settlement-status">
+            <span>Status financeiro</span>
+            <b>{financeStatus}</b>
+            <small>{purchaseValue ? `${fmtPct(liquidityCoverage)} de cobertura consolidada` : "Sem lote pronto para compra"}</small>
+          </div>
+        </div>
+        <div className="settlement-strip">
+          <div><span>Valor a liquidar</span><b>{fmt(purchaseValue)}</b></div>
+          <div><span>Caixa na conta</span><b>{fmt(settlementCash)}</b></div>
+          <div><span>Funding emitido</span><b>{fmt(issuedFundingCapacity)}</b></div>
+          <div><span>Gap estimado</span><b>{fmt(settlementGap)}</b></div>
+        </div>
+        <Table heads={["Controle", "Valor / referência", "Detalhe", "Status", "Ação"]}>
+          {financeRows.map((row) => (
+            <tr key={row.label}>
+              <td><div className="entity">{row.label}</div></td>
+              <td className="mono">{row.value}</td>
+              <td>{row.detail}</td>
+              <td><Badge v={row.status} /></td>
+              <td><button className="mini" onClick={row.run}>{row.label === "Gap para liquidação" && settlementGap ? "Abrir funding" : "Ver módulo"}</button></td>
             </tr>
           ))}
         </Table>

@@ -1316,6 +1316,77 @@
   height: 100%;
 }
 
+.settlement-bridge {
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+
+.settlement-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.settlement-head .ctitle {
+  border-bottom: 0;
+  padding-bottom: 8px;
+}
+
+.settlement-head .muted {
+  max-width: 590px;
+}
+
+.settlement-status {
+  background: radial-gradient(circle at top right, rgba(201, 164, 93, .18), transparent 64%), #101315;
+  border: 1px solid #2a3036;
+  border-radius: 13px;
+  min-width: 240px;
+  padding: 14px;
+  text-align: right;
+}
+
+.settlement-status span,
+.settlement-strip span {
+  color: #858c94;
+  display: block;
+  font-size: 9px;
+  letter-spacing: 1px;
+  margin-bottom: 7px;
+  text-transform: uppercase;
+}
+
+.settlement-status b {
+  color: #fff;
+  display: block;
+  font-size: 16px;
+  margin-bottom: 6px;
+}
+
+.settlement-status small {
+  color: #d6b56d;
+  font-size: 10px;
+}
+
+.settlement-strip {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 0 16px 14px;
+}
+
+.settlement-strip div {
+  background: #0f1214;
+  border: 1px solid #252b30;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.settlement-strip b {
+  color: #fff;
+  font-size: 14px;
+}
+
 .simulation-panel {
   display: grid;
   gap: 10px;
@@ -1384,8 +1455,21 @@
     display: block;
   }
 
+  .settlement-head {
+    display: block;
+  }
+
   .dossier-score {
     margin: 0 16px 14px;
     text-align: left;
+  }
+
+  .settlement-status {
+    margin: 0 16px 14px;
+    text-align: left;
+  }
+
+  .settlement-strip {
+    grid-template-columns: 1fr;
   }
 }
