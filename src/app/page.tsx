@@ -1957,8 +1957,12 @@ function CessionJourneyPage({
   const blockedRows = pricedRows.filter((row) => row.readiness.status !== "Pronto");
   const faceValue = readyRows.reduce((sum, row) => sum + row.item.valor, 0);
   const purchaseValue = readyRows.reduce((sum, row) => sum + row.pricing.purchasePrice, 0);
+  const grossPresentValue = readyRows.reduce((sum, row) => sum + row.pricing.grossPurchasePrice, 0);
+  const serviceFeeTotal = readyRows.reduce((sum, row) => sum + row.pricing.serviceFee, 0);
   const discount = faceValue ? 1 - purchaseValue / faceValue : 0;
   const weightedRate = faceValue ? readyRows.reduce((sum, row) => sum + row.pricing.annualRate * row.item.valor, 0) / faceValue : annualRate / 100;
+  const weightedBusinessDays = faceValue ? readyRows.reduce((sum, row) => sum + row.pricing.businessDays * row.item.valor, 0) / faceValue : 0;
+  const weightedRiskSpread = faceValue ? readyRows.reduce((sum, row) => sum + row.pricing.riskSpread * row.item.valor, 0) / faceValue : 0;
   const purchaseAccount = cashAccounts.find((account) => account.purpose === "PURCHASE_SETTLEMENT" && account.status === "Ativa" && !account.deletedAt);
   const fundingCapacity = fundingIssues.filter((issue) => issue.status !== "Liquidado").reduce((sum, issue) => sum + issue.amount, 0);
   const issuedFundingCapacity = fundingIssues.filter((issue) => issue.status === "Emitido").reduce((sum, issue) => sum + issue.amount, 0);
@@ -2138,6 +2142,24 @@ function CessionJourneyPage({
     ].join("\n");
     void navigator.clipboard?.writeText(memo);
     onNotice("Resumo do dossiê copiado para a área de transferência.");
+  }
+  function copyAcquisitionMemo() {
+    const memo = [
+      "HOAM Warehouse · Memória de aquisição",
+      `Operação: ${activeOperation?.id ?? "não registrada"}`,
+      `Ativos prontos: ${readyRows.length}`,
+      `Valor de face: ${fmt(faceValue)}`,
+      `Valor presente bruto: ${fmt(grossPresentValue)}`,
+      `Tarifas/custos: ${fmt(serviceFeeTotal)}`,
+      `Preço líquido de compra: ${fmt(purchaseValue)}`,
+      `Deságio econômico: ${fmt(faceValue - purchaseValue)} (${fmtPct(discount)})`,
+      `Taxa média ponderada: ${fmtPct(weightedRate)}`,
+      `Spread médio de risco: ${fmtPct(weightedRiskSpread)}`,
+      `Prazo médio ponderado: ${weightedBusinessDays.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} DU`,
+      `Conta de liquidação: ${purchaseAccount?.name ?? "não configurada"}`,
+    ].join("\n");
+    void navigator.clipboard?.writeText(memo);
+    onNotice("Memória de aquisição copiada para a área de transferência.");
   }
   const financeRows = [
     {
@@ -2417,6 +2439,51 @@ function CessionJourneyPage({
               <td><button className="mini" onClick={row.run}>{row.label === "Gap para liquidação" && settlementGap ? "Abrir funding" : "Ver módulo"}</button></td>
             </tr>
           ))}
+        </Table>
+      </div>
+      <div className="card acquisition-memo">
+        <div className="acquisition-memo-head">
+          <div>
+            <div className="ctitle">Memória de aquisição</div>
+            <p className="muted">Resumo econômico do lote pronto: apreçamento, deságio, prazo, spread e lançamentos esperados.</p>
+          </div>
+          <button className="mini" onClick={copyAcquisitionMemo}>Copiar memória</button>
+        </div>
+        <div className="acquisition-waterfall">
+          <div><span>Face</span><b>{fmt(faceValue)}</b><small>Valor nominal cedido</small></div>
+          <div><span>VP bruto</span><b>{fmt(grossPresentValue)}</b><small>Face descontada pela taxa efetiva</small></div>
+          <div><span>Custos</span><b>{fmt(serviceFeeTotal)}</b><small>{serviceFeeBps} bps sobre face</small></div>
+          <div><span>Preço líquido</span><b>{fmt(purchaseValue)}</b><small>Valor estimado de desembolso</small></div>
+          <div><span>Deságio</span><b>{fmt(faceValue - purchaseValue)}</b><small>{fmtPct(discount)} do valor de face</small></div>
+        </div>
+        <div className="acquisition-metrics">
+          <div><span>Taxa média</span><b>{fmtPct(weightedRate)}</b></div>
+          <div><span>Spread de risco</span><b>{fmtPct(weightedRiskSpread)}</b></div>
+          <div><span>Prazo médio</span><b>{weightedBusinessDays.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} DU</b></div>
+          <div><span>Ativos prontos</span><b>{readyRows.length}</b></div>
+        </div>
+        <Table heads={["Lançamento esperado", "Débito", "Crédito", "Valor", "Observação"]}>
+          <tr>
+            <td>Reconhecimento do direito creditório</td>
+            <td>Carteira warehouse</td>
+            <td>Caixa de liquidação</td>
+            <td className="mono">{fmt(purchaseValue)}</td>
+            <td>Entrada pelo preço líquido de compra.</td>
+          </tr>
+          <tr>
+            <td>Deságio econômico</td>
+            <td>Direitos a apropriar</td>
+            <td>Resultado financeiro futuro</td>
+            <td className="mono">{fmt(faceValue - purchaseValue)}</td>
+            <td>Diferença entre face e preço líquido.</td>
+          </tr>
+          <tr>
+            <td>Custos e tarifas</td>
+            <td>Despesa/custo de aquisição</td>
+            <td>Preço bruto da operação</td>
+            <td className="mono">{fmt(serviceFeeTotal)}</td>
+            <td>Estimado conforme bps configurado.</td>
+          </tr>
         </Table>
       </div>
       <div className="grid access-grid">

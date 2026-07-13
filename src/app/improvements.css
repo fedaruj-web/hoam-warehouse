@@ -1387,6 +1387,81 @@
   font-size: 14px;
 }
 
+.acquisition-memo {
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+
+.acquisition-memo-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.acquisition-memo-head .ctitle {
+  border-bottom: 0;
+  padding-bottom: 8px;
+}
+
+.acquisition-memo-head .muted {
+  max-width: 620px;
+}
+
+.acquisition-memo-head .mini {
+  float: none;
+  margin: 16px 16px 0 0;
+  white-space: nowrap;
+}
+
+.acquisition-waterfall,
+.acquisition-metrics {
+  display: grid;
+  gap: 10px;
+  padding: 0 16px 14px;
+}
+
+.acquisition-waterfall {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.acquisition-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.acquisition-waterfall div,
+.acquisition-metrics div {
+  background: linear-gradient(145deg, #111519, #0d0f11);
+  border: 1px solid #262c31;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.acquisition-waterfall span,
+.acquisition-metrics span {
+  color: #858c94;
+  display: block;
+  font-size: 9px;
+  letter-spacing: 1px;
+  margin-bottom: 7px;
+  text-transform: uppercase;
+}
+
+.acquisition-waterfall b,
+.acquisition-metrics b {
+  color: #fff;
+  display: block;
+  font-size: 14px;
+}
+
+.acquisition-waterfall small {
+  color: #777f87;
+  display: block;
+  font-size: 10px;
+  line-height: 1.4;
+  margin-top: 7px;
+}
+
 .simulation-panel {
   display: grid;
   gap: 10px;
@@ -1470,6 +1545,19 @@
   }
 
   .settlement-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .acquisition-memo-head {
+    display: block;
+  }
+
+  .acquisition-memo-head .mini {
+    margin: 0 16px 14px;
+  }
+
+  .acquisition-waterfall,
+  .acquisition-metrics {
     grid-template-columns: 1fr;
   }
 }
