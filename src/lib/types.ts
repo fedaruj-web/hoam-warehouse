@@ -4,6 +4,7 @@
   | "esteira"
   | "cedentes"
   | "sacados"
+  | "jornada"
   | "importacao"
   | "confirmacao"
   | "elegibilidade"

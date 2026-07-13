@@ -82,6 +82,7 @@ const viewModule: Record<View, string> = {
   esteira: "Esteira",
   cedentes: "Cedentes",
   sacados: "Sacados",
+  jornada: "Compra",
   importacao: "Importação",
   confirmacao: "Confirmação",
   elegibilidade: "Elegibilidade",
@@ -114,6 +115,7 @@ const info: Record<View, [string, string, string]> = {
   esteira: ["OPERAÇÕES", "Esteira operacional", "Funil guiado do ciclo de vida dos direitos creditórios"],
   cedentes: ["ORIGINAÇÃO", "Cedentes", "Gestão de originadores e limites de crédito"],
   sacados: ["CRÉDITO", "Sacados", "Gestão de devedores e concentração de risco"],
+  jornada: ["CAPITAL FLOW", "Jornada de cessão", "Fluxo guiado da simulação à entrada na carteira warehouse"],
   importacao: ["OPERAÇÕES", "Importação de duplicatas", "Envie, valide e processe novos lotes"],
   confirmacao: ["OPERAÇÕES", "Confirmação de duplicatas", "Registro de aceite, divergência e evidências por ativo"],
   elegibilidade: ["RISCO", "Motor de elegibilidade", "Validação automática conforme políticas vigentes"],
@@ -366,6 +368,7 @@ export default function Home() {
     {
       label: "Operação",
       items: [
+        ["Jornada de cessão", "jornada", ListChecks],
         ["Importação", "importacao", FileUp],
         ["Confirmação", "confirmacao", ClipboardCheck],
         ["Elegibilidade", "elegibilidade", ShieldCheck],
@@ -1352,8 +1355,24 @@ export default function Home() {
                       </div>
                     </td>
                   </tr>
-                ))}
+              ))}
             </EntityPage>
+          )}
+          {view === "jornada" && (
+            <CessionJourneyPage
+              annualRate={annualRate}
+              assignors={assignors}
+              batches={batches}
+              cashAccounts={cashAccounts}
+              debtors={debtors}
+              documentChecklists={documentChecklists}
+              fundingIssues={fundingIssues}
+              owned={owned}
+              receivables={activeReceivables}
+              serviceFeeBps={serviceFeeBps}
+              setModal={setModal}
+              setView={setView}
+            />
           )}
           {view === "importacao" && <ImportPage batches={batches} receivables={activeReceivables} owned={owned} />}
           {view === "confirmacao" && (
@@ -1842,6 +1861,207 @@ function EntityPage({ children, heads, q, setQ }: { addLabel: string; canCreate:
     <div className="filters"><input placeholder="Buscar por nome ou CNPJ..." value={q} onChange={(e) => setQ(e.target.value)} /><button className="btn">Filtros</button></div>
     <div className="card"><Table heads={heads}>{children}</Table></div>
   </>;
+}
+
+function CessionJourneyPage({
+  annualRate,
+  assignors,
+  batches,
+  cashAccounts,
+  debtors,
+  documentChecklists,
+  fundingIssues,
+  owned,
+  receivables,
+  serviceFeeBps,
+  setModal,
+  setView,
+}: {
+  annualRate: number;
+  assignors: Assignor[];
+  batches: ImportBatch[];
+  cashAccounts: CashAccount[];
+  debtors: Debtor[];
+  documentChecklists: DocumentChecklist[];
+  fundingIssues: FundingIssue[];
+  owned: Receivable[];
+  receivables: Receivable[];
+  serviceFeeBps: number;
+  setModal: (modal: Modal) => void;
+  setView: (view: View) => void;
+}) {
+  const openReceivables = receivables.filter((item) => !["Comprado", "Liquidado"].includes(item.status));
+  const imported = receivables.filter((item) => item.status === "Importado");
+  const review = receivables.filter((item) => item.status === "Revisão" || item.status === "Inelegível");
+  const ready = receivables.filter((item) => item.status === "Elegível" || item.status === "Aprovado");
+  const confirmed = receivables.filter((item) => validConfirmationStatuses.includes(item.confirmationStatus ?? ""));
+  const pricedRows = ready.map((item) => {
+    const pricing = item.pricing?.pricingSteps?.length ? item.pricing : priceReceivable(item, annualRate / 100, serviceFeeBps);
+    return {
+      item,
+      pricing,
+      readiness: buildPurchaseReadiness(item, pricing, assignors, debtors, documentChecklists, cashAccounts),
+    };
+  });
+  const readyRows = pricedRows.filter((row) => row.readiness.status === "Pronto");
+  const blockedRows = pricedRows.filter((row) => row.readiness.status !== "Pronto");
+  const faceValue = readyRows.reduce((sum, row) => sum + row.item.valor, 0);
+  const purchaseValue = readyRows.reduce((sum, row) => sum + row.pricing.purchasePrice, 0);
+  const discount = faceValue ? 1 - purchaseValue / faceValue : 0;
+  const weightedRate = faceValue ? readyRows.reduce((sum, row) => sum + row.pricing.annualRate * row.item.valor, 0) / faceValue : annualRate / 100;
+  const purchaseAccount = cashAccounts.find((account) => account.purpose === "PURCHASE_SETTLEMENT" && account.status === "Ativa" && !account.deletedAt);
+  const fundingCapacity = fundingIssues.filter((issue) => issue.status !== "Liquidado").reduce((sum, issue) => sum + issue.amount, 0);
+  const cashCoverage = purchaseValue ? (purchaseAccount?.balance ?? 0) / purchaseValue : 0;
+  const latestBatch = batches[0];
+  const activeAssignors = assignors.filter((item) => !item.deletedAt);
+  const activeDebtors = debtors.filter((item) => !item.deletedAt);
+  const nextAction =
+    !activeAssignors.length ? { label: "Cadastrar cedente", view: "cedentes" as View } :
+    !activeDebtors.length ? { label: "Cadastrar sacado", view: "sacados" as View } :
+    !receivables.length ? { label: "Importar duplicatas", modal: "upload" as Modal } :
+    imported.length ? { label: "Rodar elegibilidade", view: "elegibilidade" as View } :
+    !confirmed.length && openReceivables.length ? { label: "Gerar confirmações", view: "confirmacao" as View } :
+    review.length ? { label: "Enviar ao comitê", view: "comite" as View } :
+    readyRows.length ? { label: "Comprar ativos", view: "compra" as View } :
+    { label: "Monitorar carteira", view: "carteira" as View };
+  const journeySteps = [
+    {
+      title: "1. Simulação",
+      status: receivables.length ? "Em andamento" : "Aguardando títulos",
+      metric: fmt(receivables.reduce((sum, item) => sum + item.valor, 0)),
+      detail: `${receivables.length} título(s) carregado(s) para análise`,
+      action: () => setView("jornada"),
+    },
+    {
+      title: "2. Upload de títulos",
+      status: latestBatch ? latestBatch.status : "Pendente",
+      metric: latestBatch ? latestBatch.fileName : "Sem lote",
+      detail: latestBatch ? `${latestBatch.validRows}/${latestBatch.totalRows} linhas válidas` : "Importe CSV/XLSX para iniciar a cessão",
+      action: () => setModal("upload"),
+    },
+    {
+      title: "3. Validação",
+      status: imported.length ? "Pendente" : ready.length ? "Validado" : "Aguardando",
+      metric: `${ready.length} elegível(is)`,
+      detail: `${review.length} em revisão · ${imported.length} importado(s) sem motor`,
+      action: () => setView("elegibilidade"),
+    },
+    {
+      title: "4. Confirmação",
+      status: confirmed.length ? "Com evidência" : "Pendente",
+      metric: `${confirmed.length}/${openReceivables.length || receivables.length}`,
+      detail: "Aceite, dispensa ou divergência por sacado",
+      action: () => setView("confirmacao"),
+    },
+    {
+      title: "5. Comitê",
+      status: review.length ? "Exceções abertas" : "Sem fila crítica",
+      metric: fmt(review.reduce((sum, item) => sum + item.valor, 0)),
+      detail: "Aprovação de exceções e bloqueios",
+      action: () => setView("comite"),
+    },
+    {
+      title: "6. Conta e funding",
+      status: cashCoverage >= 1 ? "Coberto" : purchaseValue ? "Atenção" : "Aguardando compra",
+      metric: purchaseAccount ? fmt(purchaseAccount.balance ?? 0) : "Sem conta",
+      detail: `${fmt(fundingCapacity)} em funding cadastrado`,
+      action: () => setView("caixa"),
+    },
+    {
+      title: "7. Compra",
+      status: readyRows.length ? "Pronto para compra" : "Sem lote pronto",
+      metric: fmt(purchaseValue),
+      detail: `${readyRows.length} pronto(s) · ${blockedRows.length} bloqueado(s)`,
+      action: () => setView("compra"),
+    },
+    {
+      title: "8. Carteira",
+      status: owned.length ? "Ativa" : "Sem ativos",
+      metric: fmt(owned.reduce((sum, item) => sum + (item.outstandingValue ?? item.valor), 0)),
+      detail: `${owned.length} ativo(s) em warehouse`,
+      action: () => setView("carteira"),
+    },
+  ];
+  const concentration = Object.entries(readyRows.reduce<Record<string, number>>((acc, row) => {
+    acc[row.item.sac] = (acc[row.item.sac] ?? 0) + row.item.valor;
+    return acc;
+  }, {}))
+    .map(([name, value]) => ({ name, value, pct: faceValue ? value / faceValue : 0 }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 4);
+
+  return (
+    <>
+      <div className="kpis">
+        <K label="Valor simulado" v={fmt(faceValue)} />
+        <K label="Valor de compra" v={fmt(purchaseValue)} />
+        <K label="Deságio estimado" v={fmtPct(discount)} />
+        <K label="Taxa média" v={fmtPct(weightedRate)} />
+      </div>
+      <div className="card journey-hero-card">
+        <div>
+          <div className="ctitle">Jornada operacional da cessão</div>
+          <p className="muted">Uma visão única para conduzir o lote da simulação até a entrada na carteira warehouse.</p>
+        </div>
+        <button
+          className="btn gold"
+          onClick={() => {
+            if ("modal" in nextAction) setModal(nextAction.modal ?? null);
+            else setView(nextAction.view);
+          }}
+        >
+          {nextAction.label}
+        </button>
+      </div>
+      <div className="journey-grid">
+        {journeySteps.map((step) => (
+          <button className="journey-step card" key={step.title} onClick={step.action}>
+            <span>{step.title}</span>
+            <b>{step.metric}</b>
+            <em>{step.status}</em>
+            <small>{step.detail}</small>
+          </button>
+        ))}
+      </div>
+      <div className="grid access-grid">
+        <div className="card">
+          <div className="ctitle">Simulação consolidada do lote pronto</div>
+          <div className="simulation-panel">
+            <div><span>Face value</span><b>{fmt(faceValue)}</b></div>
+            <div><span>Compra estimada</span><b>{fmt(purchaseValue)}</b></div>
+            <div><span>Desconto</span><b>{fmt(faceValue - purchaseValue)}</b></div>
+            <div><span>Caixa após compra</span><b>{fmt((purchaseAccount?.balance ?? 0) - purchaseValue)}</b></div>
+          </div>
+          <Table heads={["Ativo", "Cedente / Sacado", "Vencimento", "Face", "Preço", "Prontidão"]}>
+            {pricedRows.slice(0, 8).map((row) => (
+              <tr key={row.item.id}>
+                <td className="mono">{row.item.id}</td>
+                <td><div className="entity">{row.item.ced}</div><div className="sub">{row.item.sac}</div></td>
+                <td>{row.item.venc}</td>
+                <td className="mono">{fmt(row.item.valor)}</td>
+                <td className="mono">{fmt(row.pricing.purchasePrice)}</td>
+                <td><Badge v={row.readiness.status} /><div className="sub">{row.readiness.blockers[0]?.label ?? row.readiness.warnings[0]?.label ?? "Sem pendência crítica"}</div></td>
+              </tr>
+            ))}
+          </Table>
+          {!pricedRows.length && <div className="note">Nenhum ativo elegível ou aprovado para simulação. Importe títulos e rode o motor de elegibilidade.</div>}
+        </div>
+        <div className="card">
+          <div className="ctitle">Pendências e concentração</div>
+          <div className="rule">Títulos sem elegibilidade<b>{imported.length}</b></div>
+          <div className="rule">Exceções para comitê<b>{review.length}</b></div>
+          <div className="rule">Prontos bloqueados por checklist<b>{blockedRows.length}</b></div>
+          <div className="rule">Cobertura de caixa<b>{purchaseValue ? fmtPct(Math.min(cashCoverage, 9.99)) : "N/A"}</b></div>
+          <div className="ctitle">Top sacados do lote</div>
+          {concentration.length ? concentration.map((row) => <div className="rule" key={row.name}>{row.name}<b>{fmtPct(row.pct)}</b></div>) : <div className="note">Sem lote elegível para análise de concentração.</div>}
+          <div className="actions">
+            <button className="btn" onClick={() => setView("documentos")}>Ver documentos</button>
+            <button className="btn" onClick={() => setView("risco")}>Risco e covenants</button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
 }
 
 function ImportPage({ batches, receivables, owned }: { batches: ImportBatch[]; receivables: Receivable[]; owned: Receivable[] }) {

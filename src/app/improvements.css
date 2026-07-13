@@ -1090,3 +1090,137 @@
     flex-direction: column;
   }
 }
+
+.journey-hero-card {
+  align-items: center;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  overflow: hidden;
+  padding-right: 18px;
+  position: relative;
+}
+
+.journey-hero-card::before {
+  background: radial-gradient(circle, rgba(201, 164, 93, 0.18), transparent 62%);
+  content: "";
+  height: 220px;
+  left: 12%;
+  position: absolute;
+  top: -110px;
+  width: 360px;
+}
+
+.journey-hero-card > * {
+  position: relative;
+}
+
+.journey-hero-card .ctitle {
+  border-bottom: 0;
+  padding-bottom: 8px;
+}
+
+.journey-hero-card .muted {
+  font-size: 12px;
+  margin: 0 19px 17px;
+}
+
+.journey-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.journey-step {
+  background: linear-gradient(145deg, #15191c, #0f1113);
+  cursor: pointer;
+  display: grid;
+  gap: 8px;
+  min-height: 154px;
+  padding: 16px;
+  text-align: left;
+  transition: border-color .18s ease, transform .18s ease;
+}
+
+.journey-step:hover {
+  border-color: #7d6636;
+  transform: translateY(-1px);
+}
+
+.journey-step span {
+  color: #c9a45d;
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+
+.journey-step b {
+  color: #fff;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.journey-step em {
+  color: #d6b56d;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.journey-step small {
+  color: #828990;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.simulation-panel {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 14px 16px 4px;
+}
+
+.simulation-panel div {
+  background: #101315;
+  border: 1px solid #252a2f;
+  border-radius: 9px;
+  padding: 13px;
+}
+
+.simulation-panel span {
+  color: #858c94;
+  display: block;
+  font-size: 9px;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.simulation-panel b {
+  color: #fff;
+  font-size: 13px;
+}
+
+@media (max-width: 1100px) {
+  .journey-grid,
+  .simulation-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .journey-hero-card {
+    align-items: stretch;
+    flex-direction: column;
+    padding-right: 0;
+  }
+
+  .journey-hero-card .btn {
+    margin: 0 18px 18px;
+  }
+
+  .journey-grid,
+  .simulation-panel {
+    grid-template-columns: 1fr;
+  }
+}
