@@ -1403,7 +1403,9 @@ export default function Home() {
               createOperation={createCessionOperation}
               debtors={debtors}
               documentChecklists={documentChecklists}
+              documents={documents}
               fundingIssues={fundingIssues}
+              onNotice={setNotice}
               owned={owned}
               receivables={activeReceivables}
               serviceFeeBps={serviceFeeBps}
@@ -1910,7 +1912,9 @@ function CessionJourneyPage({
   createOperation,
   debtors,
   documentChecklists,
+  documents,
   fundingIssues,
+  onNotice,
   owned,
   receivables,
   serviceFeeBps,
@@ -1926,7 +1930,9 @@ function CessionJourneyPage({
   createOperation: (input: { title: string; status: string; currentStep: string; faceValue: number; purchaseValue: number; readyCount: number; blockedCount: number; snapshot: unknown }) => void;
   debtors: Debtor[];
   documentChecklists: DocumentChecklist[];
+  documents: DocumentRecord[];
   fundingIssues: FundingIssue[];
+  onNotice: (message: string) => void;
   owned: Receivable[];
   receivables: Receivable[];
   serviceFeeBps: number;
@@ -2044,6 +2050,87 @@ function CessionJourneyPage({
     weightedRate,
     cashCoverage,
   };
+  const validDocuments = documents.filter((document) => document.status === "Válido");
+  const hasRequirement = (requirement: string, entityHints: string[] = []) =>
+    validDocuments.some((document) =>
+      document.requirement === requirement &&
+      (!entityHints.length || entityHints.some((hint) => document.entity.includes(hint))),
+    );
+  const approvedExceptions = readyRows.filter((row) => row.item.status === "Aprovado");
+  const dossierRows = [
+    {
+      stage: "Cadastro e poderes",
+      status: activeAssignors.length && activeDebtors.length ? "Completo" : "Pendente",
+      evidence: `${activeAssignors.length} cedente(s) · ${activeDebtors.length} sacado(s)`,
+      owner: "Cadastro",
+      action: "Revisar cadastros",
+      run: () => setView("cedentes"),
+    },
+    {
+      stage: "Lastro e borderô",
+      status: readyRows.length && documentChecklists.filter((item) => item.ok).length >= readyRows.length ? "Completo" : "Pendente",
+      evidence: `${documentChecklists.filter((item) => item.ok).length}/${Math.max(readyRows.length, 1)} checklist(s) completo(s)`,
+      owner: "Cadastro/Compliance",
+      action: "Ver documentos",
+      run: () => setView("documentos"),
+    },
+    {
+      stage: "Confirmação do sacado",
+      status: readyRows.length && readyRows.every((row) => validConfirmationStatuses.includes(row.item.confirmationStatus ?? "") || Boolean(row.item.confirmationNotes?.trim())) ? "Completo" : "Pendente",
+      evidence: `${readyRows.filter((row) => validConfirmationStatuses.includes(row.item.confirmationStatus ?? "") || Boolean(row.item.confirmationNotes?.trim())).length}/${Math.max(readyRows.length, 1)} evidência(s)`,
+      owner: "Operações",
+      action: "Abrir confirmações",
+      run: () => setView("confirmacao"),
+    },
+    {
+      stage: "Comitê e exceções",
+      status: approvedExceptions.length ? (hasRequirement("ATA_COMITE", approvedExceptions.map((row) => row.item.id)) ? "Completo" : "Atenção") : "Dispensado",
+      evidence: approvedExceptions.length ? `${approvedExceptions.length} exceção(ões) aprovada(s)` : "Sem exceções no lote pronto",
+      owner: "Comitê",
+      action: "Abrir comitê",
+      run: () => setView("comite"),
+    },
+    {
+      stage: "Operação registrada",
+      status: activeOperation ? "Completo" : "Pendente",
+      evidence: activeOperation ? `${activeOperation.id} · ${activeOperation.currentStep}` : "Sem registro persistido",
+      owner: "Operações",
+      action: activeOperation ? "Ver jornada" : "Registrar",
+      run: () => activeOperation ? setView("jornada") : createOperation({
+        title: `Cessão warehouse · ${new Date().toLocaleDateString("pt-BR")}`,
+        status: readyRows.length ? "Validação" : "Simulação",
+        currentStep: readyRows.length ? "Validação" : "Simulação",
+        faceValue,
+        purchaseValue,
+        readyCount: readyRows.length,
+        blockedCount: blockedRows.length,
+        snapshot: operationSnapshot,
+      }),
+    },
+    {
+      stage: "Pagamento e carteira",
+      status: owned.length ? "Completo" : readyRows.length ? "Pendente" : "Aguardando",
+      evidence: owned.length ? `${owned.length} ativo(s) em carteira` : `${readyRows.length} ativo(s) pronto(s) para liquidação`,
+      owner: "Tesouraria",
+      action: owned.length ? "Ver carteira" : "Comprar ativos",
+      run: () => setView(owned.length ? "carteira" : "compra"),
+    },
+  ];
+  const dossierComplete = dossierRows.filter((row) => row.status === "Completo" || row.status === "Dispensado").length;
+  const dossierProgress = Math.round((dossierComplete / dossierRows.length) * 100);
+  function copyDossierMemo() {
+    const memo = [
+      "HOAM Warehouse · Dossiê de formalização",
+      `Operação: ${activeOperation?.id ?? "não registrada"}`,
+      `Face pronta: ${fmt(faceValue)}`,
+      `Preço estimado: ${fmt(purchaseValue)}`,
+      `Ativos prontos: ${readyRows.length}`,
+      `Bloqueios: ${blockedRows.length}`,
+      ...dossierRows.map((row) => `- ${row.stage}: ${row.status} · ${row.evidence}`),
+    ].join("\n");
+    void navigator.clipboard?.writeText(memo);
+    onNotice("Resumo do dossiê copiado para a área de transferência.");
+  }
   const blockerPlaybook: Record<string, { owner: string; sla: string; action: string; view?: View; modal?: Modal }> = {
     "Cedente ativo": { owner: "Cadastro", sla: "D+1", action: "Regularizar cadastro do cedente", view: "cedentes" },
     "Sacado ativo": { owner: "Cadastro", sla: "D+1", action: "Completar cadastro e contatos do sacado", view: "sacados" },
@@ -2231,6 +2318,31 @@ function CessionJourneyPage({
         ) : (
           <div className="note">Sem bloqueios relevantes. O lote pronto pode seguir para boleta de compra.</div>
         )}
+      </div>
+      <div className="card formalization-dossier">
+        <div className="formalization-head">
+          <div>
+            <div className="ctitle">Dossiê de formalização</div>
+            <p className="muted">Pacote mínimo de evidências para fechar compra, liquidação e trilha de auditoria.</p>
+          </div>
+          <div className="dossier-score">
+            <span>Completude</span>
+            <b>{dossierProgress}%</b>
+            <button className="mini" onClick={copyDossierMemo}>Copiar resumo</button>
+          </div>
+        </div>
+        <div className="dossier-progress"><span style={{ width: `${dossierProgress}%` }} /></div>
+        <Table heads={["Etapa", "Status", "Evidência", "Responsável", "Ação"]}>
+          {dossierRows.map((row) => (
+            <tr key={row.stage}>
+              <td><div className="entity">{row.stage}</div></td>
+              <td><Badge v={row.status} /></td>
+              <td>{row.evidence}</td>
+              <td>{row.owner}</td>
+              <td><button className="mini" onClick={row.run}>{row.action}</button></td>
+            </tr>
+          ))}
+        </Table>
       </div>
       <div className="grid access-grid">
         <div className="card">

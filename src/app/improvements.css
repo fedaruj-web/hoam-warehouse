@@ -1251,6 +1251,71 @@
   white-space: nowrap;
 }
 
+.formalization-dossier {
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+
+.formalization-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.formalization-head .ctitle {
+  border-bottom: 0;
+  padding-bottom: 8px;
+}
+
+.formalization-head .muted {
+  max-width: 560px;
+}
+
+.dossier-score {
+  background: linear-gradient(145deg, #111519, #0c0e10);
+  border: 1px solid #272d33;
+  border-radius: 12px;
+  min-width: 190px;
+  padding: 13px;
+  text-align: right;
+}
+
+.dossier-score span {
+  color: #858c94;
+  display: block;
+  font-size: 9px;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.dossier-score b {
+  color: #d7b56d;
+  display: block;
+  font-size: 24px;
+  margin-bottom: 8px;
+}
+
+.dossier-score .mini {
+  float: none;
+}
+
+.dossier-progress {
+  background: #0b0d0f;
+  border: 1px solid #24292e;
+  border-radius: 999px;
+  height: 8px;
+  margin: 0 16px 12px;
+  overflow: hidden;
+}
+
+.dossier-progress span {
+  background: linear-gradient(90deg, #8f6e2e, #d7b56d);
+  display: block;
+  height: 100%;
+}
+
 .simulation-panel {
   display: grid;
   gap: 10px;
@@ -1313,5 +1378,14 @@
 
   .cession-command-board > div:first-child {
     display: block;
+  }
+
+  .formalization-head {
+    display: block;
+  }
+
+  .dossier-score {
+    margin: 0 16px 14px;
+    text-align: left;
   }
 }
