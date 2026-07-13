@@ -1222,6 +1222,35 @@
   line-height: 1.5;
 }
 
+.cession-command-board {
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+
+.cession-command-board > div:first-child {
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+}
+
+.cession-command-board .ctitle {
+  border-bottom: 0;
+  padding-bottom: 8px;
+}
+
+.cession-command-board .muted {
+  max-width: 540px;
+}
+
+.cession-command-board table {
+  margin-top: 4px;
+}
+
+.cession-command-board .mini {
+  float: none;
+  white-space: nowrap;
+}
+
 .simulation-panel {
   display: grid;
   gap: 10px;
@@ -1280,5 +1309,9 @@
   .journey-grid,
   .simulation-panel {
     grid-template-columns: 1fr;
+  }
+
+  .cession-command-board > div:first-child {
+    display: block;
   }
 }

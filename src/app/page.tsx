@@ -2044,6 +2044,91 @@ function CessionJourneyPage({
     weightedRate,
     cashCoverage,
   };
+  const blockerPlaybook: Record<string, { owner: string; sla: string; action: string; view?: View; modal?: Modal }> = {
+    "Cedente ativo": { owner: "Cadastro", sla: "D+1", action: "Regularizar cadastro do cedente", view: "cedentes" },
+    "Sacado ativo": { owner: "Cadastro", sla: "D+1", action: "Completar cadastro e contatos do sacado", view: "sacados" },
+    "Confirmação registrada": { owner: "Operações", sla: "D+0", action: "Gerar link ou lançar confirmação manual", view: "confirmacao" },
+    "Documentos mínimos": { owner: "Cadastro/Compliance", sla: "D+1", action: "Anexar lastro, contrato ou evidência", view: "documentos" },
+    Elegibilidade: { owner: "Risco", sla: "D+0", action: "Rodar motor e revisar regras", view: "elegibilidade" },
+    "Limite do cedente": { owner: "Crédito", sla: "D+1", action: "Revisar limite ou levar exceção", view: "cedentes" },
+    "Rating do sacado": { owner: "Crédito", sla: "D+1", action: "Atualizar rating do sacado", view: "sacados" },
+    "Prazo do ativo": { owner: "Comitê", sla: "D+1", action: "Deliberar exceção de prazo", view: "comite" },
+    "Preço de aquisição": { owner: "Mesa", sla: "D+0", action: "Revisar taxa, tarifa ou apreçamento", view: "compra" },
+    "Conta de liquidação": { owner: "Tesouraria", sla: "D+0", action: "Configurar conta de compra", view: "caixa" },
+    "Alçada de exceção": { owner: "Comitê", sla: "D+1", action: "Submeter exceção de deságio", view: "comite" },
+  };
+  const blockerMap = blockedRows.reduce<Record<string, { label: string; detail: string; count: number; amount: number }>>((acc, row) => {
+    row.readiness.blockers.forEach((blocker) => {
+      const current = acc[blocker.label] ?? { label: blocker.label, detail: blocker.detail, count: 0, amount: 0 };
+      current.count += 1;
+      current.amount += row.item.valor;
+      current.detail = blocker.detail;
+      acc[blocker.label] = current;
+    });
+    return acc;
+  }, {});
+  const commandRows = [
+    ...(!activeOperation ? [{
+      label: "Operação não registrada",
+      detail: "A jornada ainda não possui trilha operacional persistida",
+      count: 1,
+      amount: purchaseValue,
+      owner: "Operações",
+      sla: "D+0",
+      action: "Registrar operação",
+      run: () => createOperation({
+        title: `Cessão warehouse · ${new Date().toLocaleDateString("pt-BR")}`,
+        status: readyRows.length ? "Validação" : "Simulação",
+        currentStep: readyRows.length ? "Validação" : "Simulação",
+        faceValue,
+        purchaseValue,
+        readyCount: readyRows.length,
+        blockedCount: blockedRows.length,
+        snapshot: operationSnapshot,
+      }),
+    }] : []),
+    ...(imported.length ? [{
+      label: "Elegibilidade pendente",
+      detail: "Há títulos importados sem passagem pelo motor",
+      count: imported.length,
+      amount: imported.reduce((sum, item) => sum + item.valor, 0),
+      owner: "Risco",
+      sla: "D+0",
+      action: "Rodar elegibilidade",
+      run: () => setView("elegibilidade"),
+    }] : []),
+    ...(review.length ? [{
+      label: "Exceções abertas",
+      detail: "Títulos em revisão ou inelegíveis precisam de decisão",
+      count: review.length,
+      amount: review.reduce((sum, item) => sum + item.valor, 0),
+      owner: "Comitê",
+      sla: "D+1",
+      action: "Enviar ao comitê",
+      run: () => setView("comite"),
+    }] : []),
+    ...(purchaseValue && cashCoverage < 1 ? [{
+      label: "Caixa insuficiente",
+      detail: `Faltam ${fmt(Math.max(purchaseValue - (purchaseAccount?.balance ?? 0), 0))} na conta de liquidação`,
+      count: 1,
+      amount: Math.max(purchaseValue - (purchaseAccount?.balance ?? 0), 0),
+      owner: "Tesouraria",
+      sla: "D+0",
+      action: "Reforçar conta/funding",
+      run: () => setView("caixa"),
+    }] : []),
+    ...Object.values(blockerMap).map((blocker) => {
+      const playbook = blockerPlaybook[blocker.label] ?? { owner: "Operações", sla: "D+1", action: "Regularizar pendência", view: "alertas" as View };
+      return {
+        ...blocker,
+        ...playbook,
+        run: () => {
+          if (playbook.modal) setModal(playbook.modal);
+          else if (playbook.view) setView(playbook.view);
+        },
+      };
+    }),
+  ].sort((a, b) => b.amount - a.amount);
 
   return (
     <>
@@ -2119,6 +2204,33 @@ function CessionJourneyPage({
             <small>{step.detail}</small>
           </button>
         ))}
+      </div>
+      <div className="card cession-command-board">
+        <div>
+          <div className="ctitle">Comando de pendências da cessão</div>
+          <p className="muted">Fila única de bloqueios, responsáveis e ações para destravar a compra do lote.</p>
+        </div>
+        {commandRows.length ? (
+          <Table heads={["Pendência", "Impacto", "Responsável", "SLA", "Ação"]}>
+            {commandRows.slice(0, 8).map((row) => (
+              <tr key={`${row.label}-${row.owner}`}>
+                <td>
+                  <div className="entity">{row.label}</div>
+                  <div className="sub">{row.detail}</div>
+                </td>
+                <td>
+                  <div className="mono">{fmt(row.amount)}</div>
+                  <div className="sub">{row.count} ocorrência(s)</div>
+                </td>
+                <td>{row.owner}</td>
+                <td><Badge v={row.sla} /></td>
+                <td><button className="mini" onClick={row.run}>{row.action}</button></td>
+              </tr>
+            ))}
+          </Table>
+        ) : (
+          <div className="note">Sem bloqueios relevantes. O lote pronto pode seguir para boleta de compra.</div>
+        )}
       </div>
       <div className="grid access-grid">
         <div className="card">
