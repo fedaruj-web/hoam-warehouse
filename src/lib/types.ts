@@ -225,6 +225,28 @@ export type ImportBatch = {
   createdAt: string;
 };
 
+export type CessionOperationEvent = {
+  id: string;
+  step: string;
+  action: string;
+  notes?: string | null;
+  at: string;
+};
+
+export type CessionOperation = {
+  id: string;
+  title: string;
+  status: string;
+  currentStep: string;
+  faceValue: number;
+  purchaseValue: number;
+  readyCount: number;
+  blockedCount: number;
+  createdAt: string;
+  updatedAt: string;
+  events: CessionOperationEvent[];
+};
+
 export type AccessGroup = {
   id: string;
   name: string;

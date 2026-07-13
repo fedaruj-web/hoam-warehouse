@@ -104,6 +104,7 @@ model User {
   settlements        Settlement[]
   confirmationTokens ConfirmationToken[]
   purchaseTickets    PurchaseTicket[]
+  cessionOperations  CessionOperation[]
 
   @@index([deletedAt, status])
   @@index([assignorId])
@@ -463,6 +464,43 @@ model PurchaseTicketItem {
   @@index([ticketId])
   @@index([receivableId])
   @@index([externalId])
+}
+
+model CessionOperation {
+  id             String                 @id @default(cuid())
+  code           String                 @unique
+  title          String
+  status         String                 @default("Simulação")
+  currentStep    String                 @default("Simulação")
+  faceValue      Decimal                @default(0) @db.Decimal(18, 2)
+  purchaseValue  Decimal                @default(0) @db.Decimal(18, 2)
+  readyCount     Int                    @default(0)
+  blockedCount   Int                    @default(0)
+  snapshot       Json?
+  createdById    String?
+  createdBy      User?                  @relation(fields: [createdById], references: [id])
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  closedAt       DateTime?
+  deletedAt      DateTime?
+  events         CessionOperationEvent[]
+
+  @@index([status, createdAt])
+  @@index([deletedAt, updatedAt])
+}
+
+model CessionOperationEvent {
+  id          String           @id @default(cuid())
+  operationId String
+  operation   CessionOperation @relation(fields: [operationId], references: [id])
+  step        String
+  action      String
+  notes       String?
+  payload     Json?
+  createdById String?
+  createdAt   DateTime         @default(now())
+
+  @@index([operationId, createdAt])
 }
 
 model PortfolioItem {

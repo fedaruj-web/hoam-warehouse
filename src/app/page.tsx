@@ -63,6 +63,7 @@ import type {
   Audit,
   CashAccount,
   CashMovement,
+  CessionOperation,
   BankStatementEntry,
   Debtor,
   DocumentRecord,
@@ -289,6 +290,7 @@ export default function Home() {
   const [cashMovements, setCashMovements] = useState<CashMovement[]>(cashSeed);
   const [bankStatementEntries, setBankStatementEntries] = useState<BankStatementEntry[]>(bankStatementSeed);
   const [fundingIssues, setFundingIssues] = useState<FundingIssue[]>(fundingSeed);
+  const [cessionOperations, setCessionOperations] = useState<CessionOperation[]>([]);
   const [documentChecklists, setDocumentChecklists] = useState<DocumentChecklist[]>([]);
   const [confirmationLinks, setConfirmationLinks] = useState<Record<string, ConfirmationLinkState>>({});
   const [q, setQ] = useState("");
@@ -298,7 +300,7 @@ export default function Home() {
 
   async function refreshOperationalData() {
     try {
-      const [assignorsRes, debtorsRes, batchesRes, receivablesRes, documentsRes, checklistRes, cashAccountsRes, cashMovementsRes, bankStatementRes, fundingRes, auditsRes, usersRes, groupsRes, confirmationLinksRes] = await Promise.all([
+      const [assignorsRes, debtorsRes, batchesRes, receivablesRes, documentsRes, checklistRes, cashAccountsRes, cashMovementsRes, bankStatementRes, fundingRes, auditsRes, usersRes, groupsRes, confirmationLinksRes, cessionOpsRes] = await Promise.all([
         fetch("/api/assignors"),
         fetch("/api/debtors"),
         fetch("/api/import-batches"),
@@ -313,6 +315,7 @@ export default function Home() {
         fetch("/api/users"),
         fetch("/api/permission-groups"),
         fetch("/api/confirmation-links"),
+        fetch("/api/cession-operations"),
       ]);
       if (assignorsRes.ok) setAssignors(await assignorsRes.json());
       if (debtorsRes.ok) setDebtors(await debtorsRes.json());
@@ -331,6 +334,7 @@ export default function Home() {
         const links = (await confirmationLinksRes.json()) as Array<ConfirmationLinkState & { receivableId: string }>;
         setConfirmationLinks(Object.fromEntries(links.map((item) => [item.receivableId, item])));
       }
+      if (cessionOpsRes.ok) setCessionOperations(await cessionOpsRes.json());
     } catch {
       setNotice("Operando com dados demonstrativos locais. Banco indisponível no momento.");
     }
@@ -733,6 +737,37 @@ export default function Home() {
     const result = await persistJson<{ email: { status: "skipped" | "sent" | "failed"; reason?: string }; link: string }>(`/api/users/${user.id}/invite`, { method: "POST" });
     await refreshAudits();
     setNotice(result.email.status === "sent" ? `Convite reenviado para ${user.email}.` : `Convite gerado, mas o e-mail não foi enviado: ${result.email.reason ?? "verifique a configuração de e-mail"}.`);
+  }
+
+  async function createCessionOperation(input: {
+    title: string;
+    status: string;
+    currentStep: string;
+    faceValue: number;
+    purchaseValue: number;
+    readyCount: number;
+    blockedCount: number;
+    snapshot: unknown;
+  }) {
+    if (!requirePermission("Compra", "create", "cession-operation")) return;
+    const operation = await persistJson<CessionOperation>("/api/cession-operations", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    setCessionOperations((items) => [operation, ...items]);
+    await refreshAudits();
+    setNotice(`Operação ${operation.id} criada e registrada na jornada.`);
+  }
+
+  async function updateCessionOperation(operation: CessionOperation, status: string, currentStep: string) {
+    if (!requirePermission("Compra", "create", operation.id)) return;
+    const updated = await persistJson<CessionOperation>("/api/cession-operations", {
+      method: "PATCH",
+      body: JSON.stringify({ id: operation.id, status, currentStep, notes: `Atualização operacional para ${currentStep}.` }),
+    });
+    setCessionOperations((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+    await refreshAudits();
+    setNotice(`Operação ${updated.id} atualizada para ${updated.currentStep}.`);
   }
 
   async function addDocument(e: FormEvent<HTMLFormElement>) {
@@ -1364,6 +1399,8 @@ export default function Home() {
               assignors={assignors}
               batches={batches}
               cashAccounts={cashAccounts}
+              cessionOperations={cessionOperations}
+              createOperation={createCessionOperation}
               debtors={debtors}
               documentChecklists={documentChecklists}
               fundingIssues={fundingIssues}
@@ -1372,6 +1409,7 @@ export default function Home() {
               serviceFeeBps={serviceFeeBps}
               setModal={setModal}
               setView={setView}
+              updateOperation={updateCessionOperation}
             />
           )}
           {view === "importacao" && <ImportPage batches={batches} receivables={activeReceivables} owned={owned} />}
@@ -1868,6 +1906,8 @@ function CessionJourneyPage({
   assignors,
   batches,
   cashAccounts,
+  cessionOperations,
+  createOperation,
   debtors,
   documentChecklists,
   fundingIssues,
@@ -1876,11 +1916,14 @@ function CessionJourneyPage({
   serviceFeeBps,
   setModal,
   setView,
+  updateOperation,
 }: {
   annualRate: number;
   assignors: Assignor[];
   batches: ImportBatch[];
   cashAccounts: CashAccount[];
+  cessionOperations: CessionOperation[];
+  createOperation: (input: { title: string; status: string; currentStep: string; faceValue: number; purchaseValue: number; readyCount: number; blockedCount: number; snapshot: unknown }) => void;
   debtors: Debtor[];
   documentChecklists: DocumentChecklist[];
   fundingIssues: FundingIssue[];
@@ -1889,6 +1932,7 @@ function CessionJourneyPage({
   serviceFeeBps: number;
   setModal: (modal: Modal) => void;
   setView: (view: View) => void;
+  updateOperation: (operation: CessionOperation, status: string, currentStep: string) => void;
 }) {
   const openReceivables = receivables.filter((item) => !["Comprado", "Liquidado"].includes(item.status));
   const imported = receivables.filter((item) => item.status === "Importado");
@@ -1915,6 +1959,7 @@ function CessionJourneyPage({
   const latestBatch = batches[0];
   const activeAssignors = assignors.filter((item) => !item.deletedAt);
   const activeDebtors = debtors.filter((item) => !item.deletedAt);
+  const activeOperation = cessionOperations.find((item) => !["Concluída", "Cancelada"].includes(item.status)) ?? cessionOperations[0];
   const nextAction =
     !activeAssignors.length ? { label: "Cadastrar cedente", view: "cedentes" as View } :
     !activeDebtors.length ? { label: "Cadastrar sacado", view: "sacados" as View } :
@@ -1989,6 +2034,16 @@ function CessionJourneyPage({
     .map(([name, value]) => ({ name, value, pct: faceValue ? value / faceValue : 0 }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 4);
+  const operationSnapshot = {
+    generatedAt: new Date().toISOString(),
+    receivables: readyRows.map((row) => row.item.id),
+    latestBatch: latestBatch?.id ?? null,
+    faceValue,
+    purchaseValue,
+    discount,
+    weightedRate,
+    cashCoverage,
+  };
 
   return (
     <>
@@ -2003,16 +2058,58 @@ function CessionJourneyPage({
           <div className="ctitle">Jornada operacional da cessão</div>
           <p className="muted">Uma visão única para conduzir o lote da simulação até a entrada na carteira warehouse.</p>
         </div>
-        <button
-          className="btn gold"
-          onClick={() => {
-            if ("modal" in nextAction) setModal(nextAction.modal ?? null);
-            else setView(nextAction.view);
-          }}
-        >
-          {nextAction.label}
-        </button>
+        <div className="journey-actions">
+          <button
+            className="btn"
+            onClick={() => createOperation({
+              title: `Cessão warehouse · ${new Date().toLocaleDateString("pt-BR")}`,
+              status: readyRows.length ? "Validação" : "Simulação",
+              currentStep: readyRows.length ? "Validação" : "Simulação",
+              faceValue,
+              purchaseValue,
+              readyCount: readyRows.length,
+              blockedCount: blockedRows.length,
+              snapshot: operationSnapshot,
+            })}
+          >
+            Registrar operação
+          </button>
+          <button
+            className="btn gold"
+            onClick={() => {
+              if ("modal" in nextAction) setModal(nextAction.modal ?? null);
+              else setView(nextAction.view);
+            }}
+          >
+            {nextAction.label}
+          </button>
+        </div>
       </div>
+      {activeOperation && (
+        <div className="card cession-operation-card">
+          <div>
+            <span>Operação ativa</span>
+            <b>{activeOperation.id}</b>
+            <small>{activeOperation.title} · {activeOperation.updatedAt}</small>
+          </div>
+          <div>
+            <span>Status</span>
+            <b>{activeOperation.status}</b>
+            <small>Etapa atual: {activeOperation.currentStep}</small>
+          </div>
+          <div>
+            <span>Valores</span>
+            <b>{fmt(activeOperation.purchaseValue)}</b>
+            <small>{activeOperation.readyCount} pronto(s) · {activeOperation.blockedCount} bloqueado(s)</small>
+          </div>
+          <div className="cession-operation-actions">
+            <button className="mini" onClick={() => updateOperation(activeOperation, "Validação", "Validação")}>Validação</button>
+            <button className="mini" onClick={() => updateOperation(activeOperation, "Aprovação", "Comitê")}>Comitê</button>
+            <button className="mini" onClick={() => updateOperation(activeOperation, "Compra", "Compra")}>Compra</button>
+            <button className="mini" onClick={() => updateOperation(activeOperation, "Concluída", "Carteira")}>Concluir</button>
+          </div>
+        </div>
+      )}
       <div className="journey-grid">
         {journeySteps.map((step) => (
           <button className="journey-step card" key={step.title} onClick={step.action}>
@@ -2054,6 +2151,18 @@ function CessionJourneyPage({
           <div className="rule">Cobertura de caixa<b>{purchaseValue ? fmtPct(Math.min(cashCoverage, 9.99)) : "N/A"}</b></div>
           <div className="ctitle">Top sacados do lote</div>
           {concentration.length ? concentration.map((row) => <div className="rule" key={row.name}>{row.name}<b>{fmtPct(row.pct)}</b></div>) : <div className="note">Sem lote elegível para análise de concentração.</div>}
+          {activeOperation && (
+            <>
+              <div className="ctitle">Histórico da operação</div>
+              {activeOperation.events.length ? activeOperation.events.slice(0, 5).map((event) => (
+                <div className="audit" key={event.id}>
+                  <span className="mono">{event.at}</span>
+                  <b>{event.step}</b>
+                  <small>{event.notes || event.action}</small>
+                </div>
+              )) : <div className="note">Sem eventos registrados.</div>}
+            </>
+          )}
           <div className="actions">
             <button className="btn" onClick={() => setView("documentos")}>Ver documentos</button>
             <button className="btn" onClick={() => setView("risco")}>Risco e covenants</button>

@@ -1126,6 +1126,54 @@
   margin: 0 19px 17px;
 }
 
+.journey-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 0 0 10px;
+}
+
+.cession-operation-card {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1.2fr .8fr .8fr auto;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+}
+
+.cession-operation-card span {
+  color: #858c94;
+  display: block;
+  font-size: 9px;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.cession-operation-card b {
+  color: #fff;
+  display: block;
+  font-size: 13px;
+}
+
+.cession-operation-card small {
+  color: #777;
+  display: block;
+  font-size: 10px;
+  margin-top: 5px;
+}
+
+.cession-operation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.cession-operation-actions .mini {
+  float: none;
+}
+
 .journey-grid {
   display: grid;
   gap: 12px;
@@ -1215,8 +1263,18 @@
     padding-right: 0;
   }
 
-  .journey-hero-card .btn {
+  .journey-actions {
+    flex-direction: column;
     margin: 0 18px 18px;
+    padding: 0;
+  }
+
+  .cession-operation-card {
+    grid-template-columns: 1fr;
+  }
+
+  .cession-operation-actions {
+    justify-content: flex-start;
   }
 
   .journey-grid,
