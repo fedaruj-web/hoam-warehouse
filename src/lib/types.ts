@@ -274,6 +274,26 @@ export type Audit = {
   after?: unknown;
 };
 
+export type RegistryCheckStatus = "Pendente" | "Regular" | "Atenção" | "Bloqueado" | "Erro";
+
+export type RegistryCheck = {
+  id: string;
+  entityType: "Assignor" | "Debtor" | "Representative" | "BeneficialOwner" | string;
+  entityId: string;
+  documentType: "CNPJ" | "CPF" | string;
+  documentNumber: string;
+  provider: string;
+  status: RegistryCheckStatus;
+  registryStatus?: string | null;
+  registryName?: string | null;
+  declaredName?: string | null;
+  nameMatch?: boolean | null;
+  checkedAt?: string | null;
+  expiresAt?: string | null;
+  notes?: string | null;
+  createdAt: string;
+};
+
 export type DocumentRecord = {
   id: string;
   name: string;

@@ -73,6 +73,7 @@ import type {
   Modal,
   PermissionAction,
   Receivable,
+  RegistryCheck,
   View,
   AcquisitionPricing,
 } from "@/lib/types";
@@ -149,6 +150,20 @@ type PurchaseReadiness = {
 const investmentGradeRatings = ["AAA", "AA", "A", "BBB"];
 const validConfirmationStatuses = ["Confirmado", "Dispensado"];
 
+function latestRegistryCheck(checks: RegistryCheck[], entityType: string, entityId: string) {
+  return checks
+    .filter((check) => check.entityType === entityType && check.entityId === entityId)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+}
+
+function registryCheckSummary(check?: RegistryCheck, fallback = "Sem consulta Receita/Serpro") {
+  if (!check) return fallback;
+  const status = check.registryStatus || check.status;
+  const provider = check.provider === "UNCONFIGURED" ? "Integração pendente" : check.provider;
+  const mismatch = check.nameMatch === false ? " · nome divergente" : "";
+  return `${status} · ${provider}${mismatch}`;
+}
+
 function buildPurchaseReadiness(
   item: Receivable,
   pricing: AcquisitionPricing,
@@ -156,9 +171,12 @@ function buildPurchaseReadiness(
   debtors: Debtor[],
   documentChecklists: DocumentChecklist[],
   cashAccounts: CashAccount[],
+  registryChecks: RegistryCheck[] = [],
 ): PurchaseReadiness {
   const assignor = assignors.find((entity) => entity.nome === item.ced && !entity.deletedAt);
   const debtor = debtors.find((entity) => entity.nome === item.sac && !entity.deletedAt);
+  const assignorRegistry = assignor ? latestRegistryCheck(registryChecks, "Assignor", assignor.id) : undefined;
+  const debtorRegistry = debtor ? latestRegistryCheck(registryChecks, "Debtor", debtor.id) : undefined;
   const documents = documentChecklists.find((checklist) => checklist.receivableId === item.id);
   const dueDays = diffDays(item.venc);
   const purchaseAccount = cashAccounts.find((account) => account.purpose === "PURCHASE_SETTLEMENT" && account.status === "Ativa" && !account.deletedAt);
@@ -180,6 +198,18 @@ function buildPurchaseReadiness(
       passed: debtor?.status === "Ativo",
       critical: true,
       detail: debtor ? `Status cadastral: ${debtor.status}` : "Sacado não localizado no cadastro",
+    },
+    {
+      label: "Receita cedente",
+      passed: Boolean(assignorRegistry) && assignorRegistry?.status !== "Bloqueado" && assignorRegistry?.status !== "Erro",
+      critical: assignorRegistry?.status === "Bloqueado",
+      detail: registryCheckSummary(assignorRegistry, "Sem consulta Receita/Serpro para o cedente"),
+    },
+    {
+      label: "Receita sacado",
+      passed: Boolean(debtorRegistry) && debtorRegistry?.status !== "Bloqueado" && debtorRegistry?.status !== "Erro",
+      critical: debtorRegistry?.status === "Bloqueado",
+      detail: registryCheckSummary(debtorRegistry, "Sem consulta Receita/Serpro para o sacado"),
     },
     {
       label: "Confirmação registrada",
@@ -292,6 +322,7 @@ export default function Home() {
   const [fundingIssues, setFundingIssues] = useState<FundingIssue[]>(fundingSeed);
   const [cessionOperations, setCessionOperations] = useState<CessionOperation[]>([]);
   const [documentChecklists, setDocumentChecklists] = useState<DocumentChecklist[]>([]);
+  const [registryChecks, setRegistryChecks] = useState<RegistryCheck[]>([]);
   const [confirmationLinks, setConfirmationLinks] = useState<Record<string, ConfirmationLinkState>>({});
   const [q, setQ] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
@@ -300,13 +331,14 @@ export default function Home() {
 
   async function refreshOperationalData() {
     try {
-      const [assignorsRes, debtorsRes, batchesRes, receivablesRes, documentsRes, checklistRes, cashAccountsRes, cashMovementsRes, bankStatementRes, fundingRes, auditsRes, usersRes, groupsRes, confirmationLinksRes, cessionOpsRes] = await Promise.all([
+      const [assignorsRes, debtorsRes, batchesRes, receivablesRes, documentsRes, checklistRes, registryChecksRes, cashAccountsRes, cashMovementsRes, bankStatementRes, fundingRes, auditsRes, usersRes, groupsRes, confirmationLinksRes, cessionOpsRes] = await Promise.all([
         fetch("/api/assignors"),
         fetch("/api/debtors"),
         fetch("/api/import-batches"),
         fetch("/api/receivables"),
         fetch("/api/documents"),
         fetch("/api/document-checklists"),
+        fetch("/api/registry-checks"),
         fetch("/api/cash-accounts"),
         fetch("/api/cash-movements"),
         fetch("/api/bank-statement-entries"),
@@ -323,6 +355,7 @@ export default function Home() {
       if (receivablesRes.ok) setReceivables(await receivablesRes.json());
       if (documentsRes.ok) setDocuments(await documentsRes.json());
       if (checklistRes.ok) setDocumentChecklists(await checklistRes.json());
+      if (registryChecksRes.ok) setRegistryChecks(await registryChecksRes.json());
       if (cashAccountsRes.ok) setCashAccounts(await cashAccountsRes.json());
       if (cashMovementsRes.ok) setCashMovements(await cashMovementsRes.json());
       if (bankStatementRes.ok) setBankStatementEntries(await bankStatementRes.json());
@@ -431,6 +464,37 @@ export default function Home() {
   async function refreshAudits() {
     const response = await fetch("/api/audits");
     if (response.ok) setAudits(await response.json());
+  }
+
+  async function runRegistryCheck(entityType: "Assignor" | "Debtor", entityId: string) {
+    const permissionModule = entityType === "Debtor" ? "Sacados" : "Cedentes";
+    if (!requirePermission(permissionModule, "create", entityId)) return;
+    const created = await persistJson<RegistryCheck[]>("/api/registry-checks", {
+      method: "POST",
+      body: JSON.stringify({ entityType, entityId }),
+    });
+    setRegistryChecks((items) => [...created, ...items]);
+    const main = created.find((item) => item.entityType === entityType && item.entityId === entityId) ?? created[0];
+    if (main?.provider === "UNCONFIGURED") {
+      setNotice("Consulta registrada como pendente. Configure a integração SERPRO/Receita ou registre validação manual com evidência.");
+    } else {
+      setNotice(`Consulta Receita/Serpro registrada: ${main?.status ?? "concluída"}.`);
+    }
+    await refreshAudits();
+  }
+
+  async function registerManualRegistryCheck(entityType: "Assignor" | "Debtor", entityId: string) {
+    const registryStatus = window.prompt("Situação na Receita/CPF (ex.: ATIVA, INAPTA, REGULAR, TITULAR FALECIDO):");
+    if (!registryStatus?.trim()) return;
+    const registryName = window.prompt("Nome/Razão social retornado na consulta oficial:");
+    const notes = window.prompt("Observação/evidência da consulta manual:", "Consulta manual conferida pela equipe de cadastro/compliance.");
+    const created = await persistJson<RegistryCheck[]>("/api/registry-checks", {
+      method: "POST",
+      body: JSON.stringify({ entityType, entityId, mode: "manual", registryStatus, registryName, notes }),
+    });
+    setRegistryChecks((items) => [...created, ...items]);
+    setNotice(`Validação manual registrada: ${created[0]?.status ?? "concluída"}.`);
+    await refreshAudits();
   }
 
   function buildAssignorInput(f: FormData, status: Assignor["status"] = "Ativo") {
@@ -885,7 +949,7 @@ export default function Home() {
       setNotice("Ativo não encontrado para compra.");
       return;
     }
-    const readiness = buildPurchaseReadiness(before, pricing, assignors, debtors, documentChecklists, cashAccounts);
+    const readiness = buildPurchaseReadiness(before, pricing, assignors, debtors, documentChecklists, cashAccounts, registryChecks);
     if (readiness.blockers.length) {
       const summary = readiness.blockers.slice(0, 3).map((check) => check.label).join(", ");
       audit("PURCHASE_BLOCKED_PRECHECK", id, before, { blockers: readiness.blockers });
@@ -1338,59 +1402,67 @@ export default function Home() {
             <EntityPage
               addLabel="Novo cedente"
               canCreate={can("Cedentes", "create")}
-              heads={["Código", "Cedente", "Segmento", "Compliance", "Portal", "Limite", "Status", "Ações"]}
+              heads={["Código", "Cedente", "Segmento", "Compliance", "Receita", "Portal", "Limite", "Status", "Ações"]}
               onAdd={() => setModal("cedente")}
               q={q}
               setQ={setQ}
             >
               {assignors
                 .filter((item) => !item.deletedAt && item.nome.toLowerCase().includes(q.toLowerCase()))
-                .map((item) => (
-                  <tr key={item.id}>
-                    <td className="mono">{item.id}</td>
-                    <td>
-                      <button className="linkish" onClick={() => setDetail({ title: item.nome, rows: assignorDetailRows(item) })}>{item.nome}</button>
-                      <div className="sub">{item.doc} · {item.cidade || "Cidade não informada"}{item.uf ? `/${item.uf}` : ""}</div>
-                    </td>
-                    <td>{item.setor}</td>
-                    <td><Badge v={item.complianceStatus ?? "Pendente"} /><div className="sub">KYC: {item.kycStatus ?? "Pendente"}</div></td>
-                    <td><Badge v={`${item.portalUsers?.length ?? 0} usuário(s)`} /><div className="sub">{(item.portalUsers ?? []).filter((user) => user.status === "Convite pendente").length} convite(s) pendente(s)</div></td>
-                    <td className="mono">{fmt(item.limite)}</td>
-                    <td><Badge v={item.status} /></td>
-                    <td><div className="row-actions"><button className="btn" onClick={() => setDetail({ title: item.nome, rows: assignorDetailRows(item) })}>Detalhe</button><button className="btn" onClick={() => { setPortalAssignor(item); setModal("cedente-portal-user"); }}>Portal</button><button className="btn" onClick={() => { setEditingAssignor(item); setModal("cedente-edit"); }}>Editar</button><button className="btn" onClick={() => changeAssignorStatus(item)}>{item.status === "Bloqueado" ? "Reativar" : "Bloquear"}</button><button className="btn danger-btn" onClick={() => archiveAssignor(item)}>Arquivar</button></div></td>
-                  </tr>
-                ))}
+                .map((item) => {
+                  const registry = latestRegistryCheck(registryChecks, "Assignor", item.id);
+                  return (
+                    <tr key={item.id}>
+                      <td className="mono">{item.id}</td>
+                      <td>
+                        <button className="linkish" onClick={() => setDetail({ title: item.nome, rows: assignorDetailRows(item) })}>{item.nome}</button>
+                        <div className="sub">{item.doc} · {item.cidade || "Cidade não informada"}{item.uf ? `/${item.uf}` : ""}</div>
+                      </td>
+                      <td>{item.setor}</td>
+                      <td><Badge v={item.complianceStatus ?? "Pendente"} /><div className="sub">KYC: {item.kycStatus ?? "Pendente"}</div></td>
+                      <td><RegistryCheckCell check={registry} onManual={() => registerManualRegistryCheck("Assignor", item.id)} onRun={() => runRegistryCheck("Assignor", item.id)} /></td>
+                      <td><Badge v={`${item.portalUsers?.length ?? 0} usuário(s)`} /><div className="sub">{(item.portalUsers ?? []).filter((user) => user.status === "Convite pendente").length} convite(s) pendente(s)</div></td>
+                      <td className="mono">{fmt(item.limite)}</td>
+                      <td><Badge v={item.status} /></td>
+                      <td><div className="row-actions"><button className="btn" onClick={() => setDetail({ title: item.nome, rows: assignorDetailRows(item) })}>Detalhe</button><button className="btn" onClick={() => { setPortalAssignor(item); setModal("cedente-portal-user"); }}>Portal</button><button className="btn" onClick={() => { setEditingAssignor(item); setModal("cedente-edit"); }}>Editar</button><button className="btn" onClick={() => changeAssignorStatus(item)}>{item.status === "Bloqueado" ? "Reativar" : "Bloquear"}</button><button className="btn danger-btn" onClick={() => archiveAssignor(item)}>Arquivar</button></div></td>
+                    </tr>
+                  );
+                })}
             </EntityPage>
           )}
           {view === "sacados" && (
-            <EntityPage addLabel="Novo sacado" canCreate={can("Sacados", "create")} heads={["Código", "Sacado", "Rating", "Contato confirmação", "Confirmação", "Exposição", "Status", "Ações"]} onAdd={() => setModal("sacado")} q={q} setQ={setQ}>
+            <EntityPage addLabel="Novo sacado" canCreate={can("Sacados", "create")} heads={["Código", "Sacado", "Rating", "Receita", "Contato confirmação", "Confirmação", "Exposição", "Status", "Ações"]} onAdd={() => setModal("sacado")} q={q} setQ={setQ}>
               {debtors
                 .filter((item) => !item.deletedAt && item.nome.toLowerCase().includes(q.toLowerCase()))
-                .map((item) => (
-                  <tr key={item.id}>
-                    <td className="mono">{item.id}</td>
-                    <td>
-                      <button className="linkish" onClick={() => setDetail({ title: item.nome, rows: debtorDetailRows(item) })}>{item.nome}</button>
-                      <div className="sub">{item.doc} · {item.cidade || "Cidade não informada"}{item.uf ? `/${item.uf}` : ""}</div>
-                    </td>
-                    <td>{item.rating}</td>
-                    <td>
-                      <div className="entity">{item.contatoFinanceiroNome || "Contato não cadastrado"}</div>
-                      <div className="sub">{item.emailConfirmacao || item.contatoFinanceiroEmail || item.telefoneConfirmacao || "Confirmação pendente"}</div>
-                    </td>
-                    <td><Badge v={item.statusConfirmacao ?? "Pendente"} /><div className="sub">{item.canalConfirmacao ?? "E-mail"} · {item.janelaConfirmacao || "sem janela"}</div></td>
-                    <td className="mono">{fmt(item.valor)}</td>
-                    <td><Badge v={item.status} /></td>
-                    <td>
-                      <div className="row-actions">
-                        <button className="btn" onClick={() => setDetail({ title: item.nome, rows: debtorDetailRows(item) })}>Detalhe</button>
-                        <button className="btn" onClick={() => { setEditingDebtor(item); setModal("sacado-edit"); }}>Editar</button>
-                        <button className="btn" onClick={() => changeDebtorStatus(item)}>{item.status === "Bloqueado" ? "Reativar" : "Bloquear"}</button>
-                        <button className="btn danger-btn" onClick={() => archiveDebtor(item)}>Arquivar</button>
-                      </div>
-                    </td>
-                  </tr>
-              ))}
+                .map((item) => {
+                  const registry = latestRegistryCheck(registryChecks, "Debtor", item.id);
+                  return (
+                    <tr key={item.id}>
+                      <td className="mono">{item.id}</td>
+                      <td>
+                        <button className="linkish" onClick={() => setDetail({ title: item.nome, rows: debtorDetailRows(item) })}>{item.nome}</button>
+                        <div className="sub">{item.doc} · {item.cidade || "Cidade não informada"}{item.uf ? `/${item.uf}` : ""}</div>
+                      </td>
+                      <td>{item.rating}</td>
+                      <td><RegistryCheckCell check={registry} onManual={() => registerManualRegistryCheck("Debtor", item.id)} onRun={() => runRegistryCheck("Debtor", item.id)} /></td>
+                      <td>
+                        <div className="entity">{item.contatoFinanceiroNome || "Contato não cadastrado"}</div>
+                        <div className="sub">{item.emailConfirmacao || item.contatoFinanceiroEmail || item.telefoneConfirmacao || "Confirmação pendente"}</div>
+                      </td>
+                      <td><Badge v={item.statusConfirmacao ?? "Pendente"} /><div className="sub">{item.canalConfirmacao ?? "E-mail"} · {item.janelaConfirmacao || "sem janela"}</div></td>
+                      <td className="mono">{fmt(item.valor)}</td>
+                      <td><Badge v={item.status} /></td>
+                      <td>
+                        <div className="row-actions">
+                          <button className="btn" onClick={() => setDetail({ title: item.nome, rows: debtorDetailRows(item) })}>Detalhe</button>
+                          <button className="btn" onClick={() => { setEditingDebtor(item); setModal("sacado-edit"); }}>Editar</button>
+                          <button className="btn" onClick={() => changeDebtorStatus(item)}>{item.status === "Bloqueado" ? "Reativar" : "Bloquear"}</button>
+                          <button className="btn danger-btn" onClick={() => archiveDebtor(item)}>Arquivar</button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+              })}
             </EntityPage>
           )}
           {view === "jornada" && (
@@ -1408,6 +1480,7 @@ export default function Home() {
               onNotice={setNotice}
               owned={owned}
               receivables={activeReceivables}
+              registryChecks={registryChecks}
               serviceFeeBps={serviceFeeBps}
               setModal={setModal}
               setView={setView}
@@ -1437,6 +1510,7 @@ export default function Home() {
               fundingIssues={fundingIssues}
               onNotice={setNotice}
               receivables={activeReceivables}
+              registryChecks={registryChecks}
               purchase={purchase}
               owned={owned}
               serviceFeeBps={serviceFeeBps}
@@ -1903,6 +1977,19 @@ function EntityPage({ children, heads, q, setQ }: { addLabel: string; canCreate:
   </>;
 }
 
+function RegistryCheckCell({ check, onManual, onRun }: { check?: RegistryCheck; onManual: () => void; onRun: () => void }) {
+  return (
+    <div className="registry-cell">
+      <Badge v={check?.status ?? "Pendente"} />
+      <div className="sub">{registryCheckSummary(check)}</div>
+      <div className="row-actions">
+        <button className="mini" onClick={onRun} type="button">{check ? "Reconsultar" : "Consultar"}</button>
+        <button className="mini" onClick={onManual} type="button">Manual</button>
+      </div>
+    </div>
+  );
+}
+
 function CessionJourneyPage({
   annualRate,
   assignors,
@@ -1917,6 +2004,7 @@ function CessionJourneyPage({
   onNotice,
   owned,
   receivables,
+  registryChecks,
   serviceFeeBps,
   setModal,
   setView,
@@ -1935,6 +2023,7 @@ function CessionJourneyPage({
   onNotice: (message: string) => void;
   owned: Receivable[];
   receivables: Receivable[];
+  registryChecks: RegistryCheck[];
   serviceFeeBps: number;
   setModal: (modal: Modal) => void;
   setView: (view: View) => void;
@@ -1950,7 +2039,7 @@ function CessionJourneyPage({
     return {
       item,
       pricing,
-      readiness: buildPurchaseReadiness(item, pricing, assignors, debtors, documentChecklists, cashAccounts),
+      readiness: buildPurchaseReadiness(item, pricing, assignors, debtors, documentChecklists, cashAccounts, registryChecks),
     };
   });
   const readyRows = pricedRows.filter((row) => row.readiness.status === "Pronto");
@@ -2686,6 +2775,7 @@ function PurchasePage({
   fundingIssues,
   onNotice,
   receivables,
+  registryChecks,
   purchase,
   owned,
   serviceFeeBps,
@@ -2700,6 +2790,7 @@ function PurchasePage({
   fundingIssues: FundingIssue[];
   onNotice: (message: string) => void;
   receivables: Receivable[];
+  registryChecks: RegistryCheck[];
   purchase: (id: string) => Promise<void> | void;
   owned: Receivable[];
   serviceFeeBps: number;
@@ -2712,7 +2803,7 @@ function PurchasePage({
     return {
       item,
       pricing,
-      readiness: buildPurchaseReadiness(item, pricing, assignors, debtors, documentChecklists, cashAccounts),
+      readiness: buildPurchaseReadiness(item, pricing, assignors, debtors, documentChecklists, cashAccounts, registryChecks),
       owned: owned.some((ownedItem) => ownedItem.id === item.id),
     };
   });
@@ -4549,7 +4640,7 @@ function Table({ heads, children }: { heads: string[]; children: ReactNode }) {
 
 function Badge({ v }: { v: string }) {
   const warn = ["Revisão", "Em análise", "Monitorar", "Convite pendente", "Com erros", "Em revisão", "Estruturando", "Pendente", "Sem resposta", "Atenção", "Liquidação parcial", "Renegociado", "Alto", "Médio", "Rascunho", "Em aprovação", "Vence em breve", "Classificar", "Sem arquivo"].includes(v);
-  const danger = ["Bloqueado", "Inelegível", "Vencido", "Divergente", "Em cobrança", "Crítico", "Crítica", "Reprovada", "Cancelada"].includes(v);
+  const danger = ["Bloqueado", "Inelegível", "Vencido", "Divergente", "Em cobrança", "Crítico", "Crítica", "Reprovada", "Cancelada", "Erro"].includes(v);
   return <span className={danger ? "badge danger" : warn ? "badge warn" : "badge"}>{v}</span>;
 }
 

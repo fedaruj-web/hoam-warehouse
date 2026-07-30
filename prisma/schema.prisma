@@ -105,6 +105,7 @@ model User {
   confirmationTokens ConfirmationToken[]
   purchaseTickets    PurchaseTicket[]
   cessionOperations  CessionOperation[]
+  registryChecks     RegistryCheck[]
 
   @@index([deletedAt, status])
   @@index([assignorId])
@@ -234,6 +235,33 @@ model Debtor {
 
   @@index([deletedAt, status])
   @@index([confirmationStatus, rating])
+}
+
+model RegistryCheck {
+  id             String    @id @default(cuid())
+  entityType     String
+  entityId       String
+  documentType   String
+  documentNumber String
+  provider       String
+  status         String
+  registryStatus String?
+  registryName   String?
+  declaredName   String?
+  nameMatch      Boolean?
+  checkedAt      DateTime?
+  expiresAt      DateTime?
+  raw            Json?
+  notes          String?
+  createdById    String?
+  createdBy      User?     @relation(fields: [createdById], references: [id])
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  @@index([entityType, entityId, createdAt])
+  @@index([documentType, documentNumber])
+  @@index([status, deletedAt])
 }
 
 model ImportBatch {
