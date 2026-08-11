@@ -24,6 +24,7 @@ export type Modal =
   | "cedente"
   | "cedente-edit"
   | "cedente-portal-user"
+  | "registry-manual"
   | "sacado"
   | "sacado-edit"
   | "upload"
@@ -290,6 +291,9 @@ export type RegistryCheck = {
   nameMatch?: boolean | null;
   checkedAt?: string | null;
   expiresAt?: string | null;
+  evidenceSource?: string | null;
+  evidenceDocumentId?: string | null;
+  evidenceDocumentCode?: string | null;
   notes?: string | null;
   createdAt: string;
 };

@@ -17,6 +17,9 @@ type RegistryProviderResult = {
   nameMatch?: boolean | null;
   checkedAt?: Date | null;
   expiresAt?: Date | null;
+  evidenceSource?: string | null;
+  evidenceDocumentId?: string | null;
+  evidenceDocumentCode?: string | null;
   raw?: unknown;
   notes?: string | null;
 };
@@ -62,10 +65,11 @@ export function compareRegistryName(declaredName: string, registryName?: string 
   return declared === registry || declared.includes(registry) || registry.includes(declared);
 }
 
-export function evaluateManualRegistryCheck(subject: RegistrySubject, input: { registryStatus?: string; registryName?: string; notes?: string }): RegistryProviderResult {
+export function evaluateManualRegistryCheck(subject: RegistrySubject, input: { registryStatus?: string; registryName?: string; notes?: string; checkedAt?: Date | null; expiresAt?: Date | null; evidenceSource?: string | null; evidenceDocumentId?: string | null; evidenceDocumentCode?: string | null }): RegistryProviderResult {
   const documentType = documentTypeFor(subject.documentNumber);
   const nameMatch = compareRegistryName(subject.declaredName, input.registryName);
   const status = evaluateStatus(documentType, input.registryStatus, nameMatch);
+  const checkedAt = input.checkedAt ?? new Date();
 
   return {
     provider: "MANUAL",
@@ -73,9 +77,12 @@ export function evaluateManualRegistryCheck(subject: RegistrySubject, input: { r
     registryStatus: input.registryStatus?.trim() || null,
     registryName: input.registryName?.trim() || null,
     nameMatch,
-    checkedAt: new Date(),
-    expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
-    raw: { mode: "manual", nameMatch },
+    checkedAt,
+    expiresAt: input.expiresAt ?? new Date(checkedAt.getTime() + 1000 * 60 * 60 * 24 * 30),
+    evidenceSource: input.evidenceSource ?? null,
+    evidenceDocumentId: input.evidenceDocumentId ?? null,
+    evidenceDocumentCode: input.evidenceDocumentCode ?? null,
+    raw: { mode: "manual", nameMatch, evidenceDocumentCode: input.evidenceDocumentCode ?? null },
     notes: input.notes?.trim() || "Resultado informado manualmente pela equipe de cadastro/compliance.",
   };
 }
@@ -178,6 +185,9 @@ export function mapRegistryCheck(item: {
   nameMatch?: boolean | null;
   checkedAt?: Date | null;
   expiresAt?: Date | null;
+  evidenceSource?: string | null;
+  evidenceDocumentId?: string | null;
+  evidenceDocument?: { code: string } | null;
   notes?: string | null;
   createdAt: Date;
 }): RegistryCheck {
@@ -195,6 +205,9 @@ export function mapRegistryCheck(item: {
     nameMatch: item.nameMatch ?? null,
     checkedAt: item.checkedAt?.toISOString() ?? null,
     expiresAt: item.expiresAt?.toISOString() ?? null,
+    evidenceSource: item.evidenceSource ?? null,
+    evidenceDocumentId: item.evidenceDocumentId ?? null,
+    evidenceDocumentCode: item.evidenceDocument?.code ?? null,
     notes: item.notes ?? null,
     createdAt: item.createdAt.toISOString(),
   };

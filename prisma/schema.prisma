@@ -251,6 +251,9 @@ model RegistryCheck {
   nameMatch      Boolean?
   checkedAt      DateTime?
   expiresAt      DateTime?
+  evidenceSource String?
+  evidenceDocumentId String?
+  evidenceDocument   Document? @relation(fields: [evidenceDocumentId], references: [id])
   raw            Json?
   notes          String?
   createdById    String?
@@ -261,6 +264,7 @@ model RegistryCheck {
 
   @@index([entityType, entityId, createdAt])
   @@index([documentType, documentNumber])
+  @@index([evidenceDocumentId])
   @@index([status, deletedAt])
 }
 
@@ -586,6 +590,7 @@ model Document {
   uploadedBy   User           @relation(fields: [uploadedById], references: [id])
   receivable   Receivable?    @relation(fields: [receivableId], references: [id])
   purchase     Purchase?      @relation(fields: [purchaseId], references: [id])
+  registryChecks RegistryCheck[]
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
   deletedAt    DateTime?

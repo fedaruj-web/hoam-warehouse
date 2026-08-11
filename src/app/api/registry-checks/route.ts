@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { writeAudit } from "@/server/audit";
 import { requirePermission } from "@/server/authz";
 import { getDbOrNull } from "@/server/db";
+import { DOCUMENT_BUCKET, ensureDocumentBucket, getStorageClient } from "@/server/storage";
 import {
   compareRegistryName,
   consultOfficialRegistry,
@@ -23,7 +24,14 @@ type RegistryRequest = {
   registryStatus?: string;
   registryName?: string;
   notes?: string;
+  checkedAt?: string;
+  expiresAt?: string;
+  evidenceSource?: string;
 };
+
+function nextDocumentCode(count: number) {
+  return `DOC-${String(count + 1).padStart(4, "0")}`;
+}
 
 function moduleFor(entityType: RegistryEntityType) {
   return entityType === "Debtor" ? "Sacados" : "Cedentes";
@@ -52,6 +60,102 @@ function subjectsFromJson(entityType: RegistryEntityType, entityId: string, valu
     .filter(Boolean) as { entityType: RegistryEntityType; entityId: string; documentNumber: string; declaredName: string }[];
 }
 
+function toDate(value?: string | null) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+async function parseRegistryRequest(request: Request) {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.includes("multipart/form-data")) {
+    const form = await request.formData().catch(() => null);
+    if (!form) return { body: null, file: null as File | null };
+    const body: RegistryRequest = {
+      entityType: String(form.get("entityType") ?? "") as RegistryEntityType,
+      entityId: String(form.get("entityId") ?? ""),
+      mode: String(form.get("mode") ?? "manual") as "manual" | "official",
+      documentNumber: String(form.get("documentNumber") ?? ""),
+      declaredName: String(form.get("declaredName") ?? ""),
+      registryStatus: String(form.get("registryStatus") ?? ""),
+      registryName: String(form.get("registryName") ?? ""),
+      notes: String(form.get("notes") ?? ""),
+      checkedAt: String(form.get("checkedAt") ?? ""),
+      expiresAt: String(form.get("expiresAt") ?? ""),
+      evidenceSource: String(form.get("evidenceSource") ?? ""),
+    };
+    const file = form.get("evidenceFile");
+    return { body, file: file instanceof File && file.size > 0 ? file : null };
+  }
+
+  return { body: (await request.json().catch(() => null)) as RegistryRequest | null, file: null as File | null };
+}
+
+async function createEvidenceDocument({
+  assignorId,
+  debtorId,
+  authUserId,
+  db,
+  entityCode,
+  file,
+  source,
+  validUntil,
+}: {
+  assignorId?: string;
+  debtorId?: string;
+  authUserId: string;
+  db: NonNullable<ReturnType<typeof getDbOrNull>>;
+  entityCode: string;
+  file: File | null;
+  source?: string | null;
+  validUntil?: Date | null;
+}) {
+  if (!file) return null;
+
+  const storage = getStorageClient();
+  if (!storage) {
+    throw new Error("Storage não configurado. Defina SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY para anexar evidências.");
+  }
+
+  const code = nextDocumentCode(await db.document.count());
+  const safeName = file.name.replace(/[^\w.\-]+/g, "_");
+  const storageKey = `${code}/${Date.now()}-${safeName}`;
+  await ensureDocumentBucket(storage);
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const { error } = await storage.storage.from(DOCUMENT_BUCKET).upload(storageKey, bytes, {
+    contentType: file.type || "application/octet-stream",
+    upsert: false,
+  });
+  if (error) throw new Error(error.message);
+
+  const document = await db.document.create({
+    data: {
+      code,
+      name: `Evidência Receita - ${entityCode}`,
+      type: "KYC",
+      status: "VALID",
+      stage: "Cadastro",
+      requirement: "CONSULTA_RECEITA",
+      storageKey,
+      sizeBytes: file.size,
+      expiresAt: validUntil ?? null,
+      assignorId,
+      debtorId,
+      uploadedById: authUserId,
+    },
+  });
+
+  await writeAudit(db, {
+    action: "REGISTRY_EVIDENCE_UPLOADED",
+    entityType: "Document",
+    entityId: document.code,
+    userId: authUserId,
+    after: { document, source, bucket: DOCUMENT_BUCKET, storageKey },
+  });
+
+  return document;
+}
+
 export async function GET() {
   const db = getDbOrNull();
   const auth = await requirePermission(db, "Cedentes", "view");
@@ -60,6 +164,7 @@ export async function GET() {
 
   const checks = await db.registryCheck.findMany({
     where: { deletedAt: null },
+    include: { evidenceDocument: true },
     orderBy: { createdAt: "desc" },
     take: 500,
   });
@@ -68,7 +173,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => null)) as RegistryRequest | null;
+  const { body, file } = await parseRegistryRequest(request);
   if (!body || !isSupportedEntityType(body.entityType) || !body.entityId) {
     return NextResponse.json({ error: "Informe entityType e entityId para consultar a base cadastral." }, { status: 400 });
   }
@@ -79,9 +184,12 @@ export async function POST(request: Request) {
   if (!db) return NextResponse.json({ error: "Banco de dados indisponível para registrar a consulta." }, { status: 503 });
 
   const baseSubjects = [];
+  let evidenceAssignorId: string | undefined;
+  let evidenceDebtorId: string | undefined;
   if (body.entityType === "Assignor") {
     const assignor = await db.assignor.findUnique({ where: { code: body.entityId } });
     if (!assignor || assignor.deletedAt) return NextResponse.json({ error: "Cedente não encontrado." }, { status: 404 });
+    evidenceAssignorId = assignor.id;
     baseSubjects.push({
       entityType: "Assignor" as const,
       entityId: assignor.code,
@@ -95,6 +203,7 @@ export async function POST(request: Request) {
   } else if (body.entityType === "Debtor") {
     const debtor = await db.debtor.findUnique({ where: { code: body.entityId } });
     if (!debtor || debtor.deletedAt) return NextResponse.json({ error: "Sacado não encontrado." }, { status: 404 });
+    evidenceDebtorId = debtor.id;
     baseSubjects.push({
       entityType: "Debtor" as const,
       entityId: debtor.code,
@@ -113,6 +222,26 @@ export async function POST(request: Request) {
     });
   }
 
+  const checkedAt = toDate(body.checkedAt) ?? new Date();
+  const expiresAt = toDate(body.expiresAt) ?? new Date(checkedAt.getTime() + 1000 * 60 * 60 * 24 * 30);
+  let evidenceDocument = null;
+  try {
+    evidenceDocument = body.mode === "manual"
+      ? await createEvidenceDocument({
+          assignorId: evidenceAssignorId,
+          debtorId: evidenceDebtorId,
+          authUserId: auth.user.id,
+          db,
+          entityCode: body.entityId,
+          file,
+          source: body.evidenceSource,
+          validUntil: expiresAt,
+        })
+      : null;
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Não foi possível anexar a evidência." }, { status: 502 });
+  }
+
   const created = [];
   for (const subject of baseSubjects) {
     const result =
@@ -121,6 +250,11 @@ export async function POST(request: Request) {
             registryStatus: body.registryStatus,
             registryName: body.registryName,
             notes: body.notes,
+            checkedAt,
+            expiresAt,
+            evidenceSource: body.evidenceSource,
+            evidenceDocumentId: evidenceDocument?.id,
+            evidenceDocumentCode: evidenceDocument?.code,
           })
         : await consultOfficialRegistry(subject);
 
@@ -138,10 +272,13 @@ export async function POST(request: Request) {
         nameMatch: result.nameMatch ?? compareRegistryName(subject.declaredName, result.registryName),
         checkedAt: result.checkedAt ?? undefined,
         expiresAt: result.expiresAt ?? undefined,
+        evidenceSource: result.evidenceSource,
+        evidenceDocumentId: result.evidenceDocumentId,
         raw: result.raw as Prisma.InputJsonValue,
         notes: result.notes,
         createdById: auth.user.id,
       },
+      include: { evidenceDocument: true },
     });
     created.push(check);
   }

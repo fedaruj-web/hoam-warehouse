@@ -111,6 +111,19 @@ type ConfirmationLinkState = {
   emailAttempts: number;
 };
 
+type DetailState = {
+  title: string;
+  rows: [string, string][];
+  registryChecks?: RegistryCheck[];
+};
+
+type RegistryManualTarget = {
+  entityType: "Assignor" | "Debtor";
+  entityId: string;
+  name: string;
+  documentNumber: string;
+};
+
 const info: Record<View, [string, string, string]> = {
   dashboard: ["VISÃO GERAL", "Dashboard executivo", "Visão consolidada da operação warehouse"],
   alertas: ["COMANDO", "Alertas e pendências", "Fila executiva de risco, documentos, caixa e operação"],
@@ -162,6 +175,29 @@ function registryCheckSummary(check?: RegistryCheck, fallback = "Sem consulta Re
   const provider = check.provider === "UNCONFIGURED" ? "Integração pendente" : check.provider;
   const mismatch = check.nameMatch === false ? " · nome divergente" : "";
   return `${status} · ${provider}${mismatch}`;
+}
+
+function registryChecksForEntity(checks: RegistryCheck[], entityType: string, entityId: string) {
+  return checks
+    .filter((check) => (check.entityType === entityType && check.entityId === entityId) || check.entityId.startsWith(`${entityId}:`))
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+}
+
+function formatIsoDate(value?: string | null) {
+  if (!value) return "Não informado";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Não informado";
+  return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function registryValidityLabel(check?: RegistryCheck) {
+  if (!check?.expiresAt) return "Sem validade";
+  const expiresAt = new Date(check.expiresAt);
+  if (Number.isNaN(expiresAt.getTime())) return "Sem validade";
+  const days = Math.ceil((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  if (days < 0) return `Vencida em ${formatIsoDate(check.expiresAt)}`;
+  if (days <= 7) return `Vence em ${days} dia(s)`;
+  return `Válida até ${formatIsoDate(check.expiresAt)}`;
 }
 
 function buildPurchaseReadiness(
@@ -301,10 +337,11 @@ export default function Home() {
   const [currentUser, setCurrentUser] = useState<AppUser>(usersSeed[0]);
   const [view, setView] = useState<View>("dashboard");
   const [modal, setModal] = useState<Modal>(null);
-  const [detail, setDetail] = useState<null | { title: string; rows: [string, string][] }>(null);
+  const [detail, setDetail] = useState<DetailState | null>(null);
   const [editingAssignor, setEditingAssignor] = useState<Assignor | null>(null);
   const [portalAssignor, setPortalAssignor] = useState<Assignor | null>(null);
   const [editingDebtor, setEditingDebtor] = useState<Debtor | null>(null);
+  const [registryTarget, setRegistryTarget] = useState<RegistryManualTarget | null>(null);
   const [confirmingReceivable, setConfirmingReceivable] = useState<Receivable | null>(null);
   const [committeeReceivable, setCommitteeReceivable] = useState<Receivable | null>(null);
   const [settlingReceivable, setSettlingReceivable] = useState<Receivable | null>(null);
@@ -448,9 +485,10 @@ export default function Home() {
 
   async function persistJson<T>(url: string, init: RequestInit): Promise<T> {
     try {
+      const isFormData = init.body instanceof FormData;
       const response = await fetch(url, {
         ...init,
-        headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+        headers: isFormData ? init.headers : { "Content-Type": "application/json", ...(init.headers ?? {}) },
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.error ?? "Não foi possível concluir a operação.");
@@ -483,18 +521,39 @@ export default function Home() {
     await refreshAudits();
   }
 
-  async function registerManualRegistryCheck(entityType: "Assignor" | "Debtor", entityId: string) {
-    const registryStatus = window.prompt("Situação na Receita/CPF (ex.: ATIVA, INAPTA, REGULAR, TITULAR FALECIDO):");
-    if (!registryStatus?.trim()) return;
-    const registryName = window.prompt("Nome/Razão social retornado na consulta oficial:");
-    const notes = window.prompt("Observação/evidência da consulta manual:", "Consulta manual conferida pela equipe de cadastro/compliance.");
+  function openManualRegistryCheck(target: RegistryManualTarget) {
+    setRegistryTarget(target);
+    setModal("registry-manual");
+  }
+
+  async function registerManualRegistryCheck(formData: FormData) {
     const created = await persistJson<RegistryCheck[]>("/api/registry-checks", {
       method: "POST",
-      body: JSON.stringify({ entityType, entityId, mode: "manual", registryStatus, registryName, notes }),
+      body: formData,
+      headers: {},
     });
     setRegistryChecks((items) => [...created, ...items]);
-    setNotice(`Validação manual registrada: ${created[0]?.status ?? "concluída"}.`);
+    await refreshOperationalData();
     await refreshAudits();
+    setRegistryTarget(null);
+    setModal(null);
+    setNotice(`Validação manual registrada: ${created[0]?.status ?? "concluída"}.`);
+  }
+
+  function openAssignorDetail(item: Assignor) {
+    setDetail({
+      title: item.nome,
+      rows: assignorDetailRows(item),
+      registryChecks: registryChecksForEntity(registryChecks, "Assignor", item.id),
+    });
+  }
+
+  function openDebtorDetail(item: Debtor) {
+    setDetail({
+      title: item.nome,
+      rows: debtorDetailRows(item),
+      registryChecks: registryChecksForEntity(registryChecks, "Debtor", item.id),
+    });
   }
 
   function buildAssignorInput(f: FormData, status: Assignor["status"] = "Ativo") {
@@ -1415,16 +1474,16 @@ export default function Home() {
                     <tr key={item.id}>
                       <td className="mono">{item.id}</td>
                       <td>
-                        <button className="linkish" onClick={() => setDetail({ title: item.nome, rows: assignorDetailRows(item) })}>{item.nome}</button>
+                        <button className="linkish" onClick={() => openAssignorDetail(item)}>{item.nome}</button>
                         <div className="sub">{item.doc} · {item.cidade || "Cidade não informada"}{item.uf ? `/${item.uf}` : ""}</div>
                       </td>
                       <td>{item.setor}</td>
                       <td><Badge v={item.complianceStatus ?? "Pendente"} /><div className="sub">KYC: {item.kycStatus ?? "Pendente"}</div></td>
-                      <td><RegistryCheckCell check={registry} onManual={() => registerManualRegistryCheck("Assignor", item.id)} onRun={() => runRegistryCheck("Assignor", item.id)} /></td>
+                      <td><RegistryCheckCell check={registry} onManual={() => openManualRegistryCheck({ entityType: "Assignor", entityId: item.id, name: item.nome, documentNumber: item.doc })} onRun={() => runRegistryCheck("Assignor", item.id)} /></td>
                       <td><Badge v={`${item.portalUsers?.length ?? 0} usuário(s)`} /><div className="sub">{(item.portalUsers ?? []).filter((user) => user.status === "Convite pendente").length} convite(s) pendente(s)</div></td>
                       <td className="mono">{fmt(item.limite)}</td>
                       <td><Badge v={item.status} /></td>
-                      <td><div className="row-actions"><button className="btn" onClick={() => setDetail({ title: item.nome, rows: assignorDetailRows(item) })}>Detalhe</button><button className="btn" onClick={() => { setPortalAssignor(item); setModal("cedente-portal-user"); }}>Portal</button><button className="btn" onClick={() => { setEditingAssignor(item); setModal("cedente-edit"); }}>Editar</button><button className="btn" onClick={() => changeAssignorStatus(item)}>{item.status === "Bloqueado" ? "Reativar" : "Bloquear"}</button><button className="btn danger-btn" onClick={() => archiveAssignor(item)}>Arquivar</button></div></td>
+                      <td><div className="row-actions"><button className="btn" onClick={() => openAssignorDetail(item)}>Detalhe</button><button className="btn" onClick={() => { setPortalAssignor(item); setModal("cedente-portal-user"); }}>Portal</button><button className="btn" onClick={() => { setEditingAssignor(item); setModal("cedente-edit"); }}>Editar</button><button className="btn" onClick={() => changeAssignorStatus(item)}>{item.status === "Bloqueado" ? "Reativar" : "Bloquear"}</button><button className="btn danger-btn" onClick={() => archiveAssignor(item)}>Arquivar</button></div></td>
                     </tr>
                   );
                 })}
@@ -1440,11 +1499,11 @@ export default function Home() {
                     <tr key={item.id}>
                       <td className="mono">{item.id}</td>
                       <td>
-                        <button className="linkish" onClick={() => setDetail({ title: item.nome, rows: debtorDetailRows(item) })}>{item.nome}</button>
+                        <button className="linkish" onClick={() => openDebtorDetail(item)}>{item.nome}</button>
                         <div className="sub">{item.doc} · {item.cidade || "Cidade não informada"}{item.uf ? `/${item.uf}` : ""}</div>
                       </td>
                       <td>{item.rating}</td>
-                      <td><RegistryCheckCell check={registry} onManual={() => registerManualRegistryCheck("Debtor", item.id)} onRun={() => runRegistryCheck("Debtor", item.id)} /></td>
+                      <td><RegistryCheckCell check={registry} onManual={() => openManualRegistryCheck({ entityType: "Debtor", entityId: item.id, name: item.nome, documentNumber: item.doc })} onRun={() => runRegistryCheck("Debtor", item.id)} /></td>
                       <td>
                         <div className="entity">{item.contatoFinanceiroNome || "Contato não cadastrado"}</div>
                         <div className="sub">{item.emailConfirmacao || item.contatoFinanceiroEmail || item.telefoneConfirmacao || "Confirmação pendente"}</div>
@@ -1454,7 +1513,7 @@ export default function Home() {
                       <td><Badge v={item.status} /></td>
                       <td>
                         <div className="row-actions">
-                          <button className="btn" onClick={() => setDetail({ title: item.nome, rows: debtorDetailRows(item) })}>Detalhe</button>
+                          <button className="btn" onClick={() => openDebtorDetail(item)}>Detalhe</button>
                           <button className="btn" onClick={() => { setEditingDebtor(item); setModal("sacado-edit"); }}>Editar</button>
                           <button className="btn" onClick={() => changeDebtorStatus(item)}>{item.status === "Bloqueado" ? "Reativar" : "Bloquear"}</button>
                           <button className="btn danger-btn" onClick={() => archiveDebtor(item)}>Arquivar</button>
@@ -1541,6 +1600,7 @@ export default function Home() {
       {modal === "cedente" && <AssignorModal title="Novo cedente" onSubmit={addAssignor} close={() => setModal(null)} />}
       {modal === "cedente-edit" && editingAssignor && <AssignorModal title="Editar cedente" initial={editingAssignor} onSubmit={updateAssignor} close={() => { setEditingAssignor(null); setModal(null); }} />}
       {modal === "cedente-portal-user" && portalAssignor && <AssignorPortalUserModal assignor={portalAssignor} close={() => { setPortalAssignor(null); setModal(null); }} save={inviteAssignorPortalUser} />}
+      {modal === "registry-manual" && registryTarget && <RegistryManualModal close={() => { setRegistryTarget(null); setModal(null); }} save={registerManualRegistryCheck} target={registryTarget} />}
       {modal === "sacado" && <DebtorModal title="Novo sacado" onSubmit={addDebtor} close={() => setModal(null)} />}
       {modal === "sacado-edit" && editingDebtor && <DebtorModal title="Editar sacado" initial={editingDebtor} onSubmit={updateDebtor} close={() => { setEditingDebtor(null); setModal(null); }} />}
       {modal === "usuario" && <UserModal close={() => setModal(null)} groups={groups} save={addUser} />}
@@ -1982,6 +2042,7 @@ function RegistryCheckCell({ check, onManual, onRun }: { check?: RegistryCheck; 
     <div className="registry-cell">
       <Badge v={check?.status ?? "Pendente"} />
       <div className="sub">{registryCheckSummary(check)}</div>
+      <div className="sub">{registryValidityLabel(check)}</div>
       <div className="row-actions">
         <button className="mini" onClick={onRun} type="button">{check ? "Reconsultar" : "Consultar"}</button>
         <button className="mini" onClick={onManual} type="button">Manual</button>
@@ -4607,7 +4668,7 @@ function cleanDisplayText(value: unknown) {
     .replaceAll("usu??rios", "usuários");
 }
 
-function DetailModal({ detail, close }: { detail: { title: string; rows: [string, string][] }; close: () => void }) {
+function DetailModal({ detail, close }: { detail: DetailState; close: () => void }) {
   return (
     <div className="modalback" onClick={close}>
       <div className="modal detail-modal" onClick={(event) => event.stopPropagation()}>
@@ -4621,10 +4682,72 @@ function DetailModal({ detail, close }: { detail: { title: string; rows: [string
         <div className="detail-modal-body">
           {detail.rows.map(([k, v]) => <div className="rule" key={k}>{cleanDisplayText(k)}<b>{cleanDisplayText(v)}</b></div>)}
         </div>
+        {detail.registryChecks && (
+          <div className="detail-registry">
+            <div className="ctitle">Histórico Receita/CPF/CNPJ</div>
+            {detail.registryChecks.length ? detail.registryChecks.slice(0, 8).map((check) => (
+              <div className="registry-history-item" key={check.id}>
+                <div>
+                  <b>{check.documentType} · {check.documentNumber}</b>
+                  <small>{check.declaredName || "Nome não informado"} · {check.provider}</small>
+                </div>
+                <Badge v={check.status} />
+                <small>{registryCheckSummary(check)} · {registryValidityLabel(check)}</small>
+                <small>Consulta: {formatIsoDate(check.checkedAt)} · Evidência: {check.evidenceDocumentCode || check.evidenceSource || "Não anexada"}</small>
+              </div>
+            )) : <p className="muted">Nenhuma consulta cadastral registrada para esta entidade.</p>}
+          </div>
+        )}
         <div className="detail-modal-actions">
           <button className="btn gold" onClick={close} type="button">Voltar</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function RegistryManualModal({ close, save, target }: { close: () => void; save: (formData: FormData) => void | Promise<void>; target: RegistryManualTarget }) {
+  const { defaultExpiry, today } = useMemo(() => {
+    const nowDate = new Date();
+    return {
+      today: nowDate.toISOString().slice(0, 10),
+      defaultExpiry: new Date(nowDate.getTime() + 1000 * 60 * 60 * 24 * 30).toISOString().slice(0, 10),
+    };
+  }, []);
+  return (
+    <div className="modalback">
+      <form className="modal wide-modal" onSubmit={(event) => { event.preventDefault(); save(new FormData(event.currentTarget)); }}>
+        <h2>Registrar validação Receita</h2>
+        <p className="muted">Informe o resultado conferido em fonte oficial/autorizada e anexe a evidência da consulta.</p>
+        <input name="entityType" type="hidden" value={target.entityType} />
+        <input name="entityId" type="hidden" value={target.entityId} />
+        <input name="mode" type="hidden" value="manual" />
+        <div className="formgrid">
+          <Field label="Entidade" name="entityName" value={target.name} required={false} />
+          <Field label="Documento consultado" name="documentNumber" value={target.documentNumber} />
+          <Field label="Nome/Razão social retornado" name="registryName" value={target.name} />
+          <SelectField
+            label="Situação cadastral"
+            name="registryStatus"
+            options={["ATIVA", "REGULAR", "INAPTA", "SUSPENSA", "BAIXADA", "TITULAR FALECIDO", "CANCELADA", "NULA"].map((item) => [item, item])}
+          />
+          <Field label="Data da consulta" name="checkedAt" type="date" value={today} />
+          <Field label="Validade da consulta" name="expiresAt" type="date" value={defaultExpiry} />
+          <Field label="Fonte / protocolo" name="evidenceSource" value="Receita Federal / SERPRO / consulta autorizada" required={false} />
+          <label className="field">
+            <span>Evidência anexada</span>
+            <input accept=".pdf,.png,.jpg,.jpeg,.webp" name="evidenceFile" type="file" />
+          </label>
+        </div>
+        <label className="field">
+          <span>Observações de compliance</span>
+          <textarea name="notes" defaultValue="Consulta manual conferida pela equipe de cadastro/compliance." rows={4} />
+        </label>
+        <div className="actions">
+          <button type="button" className="btn" onClick={close}>Cancelar</button>
+          <button className="btn gold">Registrar validação</button>
+        </div>
+      </form>
     </div>
   );
 }
