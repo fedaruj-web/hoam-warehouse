@@ -332,6 +332,14 @@ function estimateFundingCost(rate: string) {
   return Number.isFinite(value) && value > 0 ? value : 0.12;
 }
 
+function annualPercentToMonthlyPercent(annualPercent: number) {
+  return (Math.pow(1 + annualPercent / 100, 1 / 12) - 1) * 100;
+}
+
+function monthlyPercentToAnnualPercent(monthlyPercent: number) {
+  return (Math.pow(1 + monthlyPercent / 100, 12) - 1) * 100;
+}
+
 export default function Home() {
   const [auth, setAuth] = useState(false);
   const [currentUser, setCurrentUser] = useState<AppUser>(usersSeed[0]);
@@ -2859,6 +2867,10 @@ function PurchasePage({
   setServiceFeeBps: (value: number) => void;
 }) {
   const purchasable = receivables.filter((d) => d.status === "Elegível" || d.status === "Aprovado" || d.status === "Comprado");
+  const monthlyRate = annualPercentToMonthlyPercent(annualRate);
+  const updateMonthlyRate = (value: number) => {
+    setAnnualRate(monthlyPercentToAnnualPercent(Number.isFinite(value) ? value : 0));
+  };
   const previews = purchasable.map((item) => {
     const pricing = item.pricing?.pricingSteps?.length ? item.pricing : priceReceivable(item, annualRate / 100, serviceFeeBps);
     return {
@@ -2923,7 +2935,7 @@ function PurchasePage({
   const basketTicket = [
     "HOAM Warehouse · Boleta operacional de compra",
     `Data: ${new Date().toLocaleString("pt-BR")}`,
-    `Parâmetros: taxa base ${annualRate.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}% a.a. · custos ${serviceFeeBps} bps`,
+    `Parâmetros: taxa base ${monthlyRate.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}% a.m. (${annualRate.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}% a.a. efetiva) · custos ${serviceFeeBps} bps`,
     `Ativos prontos: ${readyRows.length}`,
     `Face pronta: ${fmt(readyFace)}`,
     `Preço líquido estimado: ${fmt(readyValue)}`,
@@ -3066,17 +3078,18 @@ function PurchasePage({
       <div className="pricing-panel">
         <div>
           <div className="ctitle">Parâmetros de aquisição</div>
-          <p className="muted">Apreçamento por valor presente com taxa base, spread de risco, custos e dias úteis estimados.</p>
+          <p className="muted">Apreçamento por valor presente com taxa mensal alvo, spread de risco, custos e dias úteis estimados.</p>
         </div>
         <label>
-          Taxa anual alvo
+          Taxa mensal alvo
           <input
             type="number"
-            step="0.1"
+            step="0.01"
             min="0"
-            value={annualRate}
-            onChange={(e) => setAnnualRate(Number(e.target.value))}
+            value={Number(monthlyRate.toFixed(4))}
+            onChange={(e) => updateMonthlyRate(Number(e.target.value))}
           />
+          <small className="sub">Equivale a {annualRate.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}% a.a. efetiva</small>
         </label>
         <label>
           Tarifa / custos (bps)

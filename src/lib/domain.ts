@@ -161,10 +161,10 @@ export function priceReceivable(
       detail: `${calendarDays} dias corridos / ${businessDays} dias úteis`,
     },
     {
-      label: "Taxa base anual",
+      label: "Taxa base anual efetiva",
       value: annualRate,
       kind: "percent",
-      formula: "Taxa alvo informada pela mesa",
+      formula: "Taxa mensal alvo capitalizada para base anual efetiva",
     },
     {
       label: "Spread de risco",
