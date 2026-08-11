@@ -21,7 +21,7 @@ function inviteUrl(request: Request, token: string) {
 export async function POST(request: Request, context: Context) {
   const { id } = await context.params;
   const db = getDbOrNull();
-  const auth = await requirePermission(db, "UsuÃ¡rios", "admin");
+  const auth = await requirePermission(db, "Usuários", "admin");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   if (!db) return NextResponse.json({ error: "Banco indisponível." }, { status: 503 });
 

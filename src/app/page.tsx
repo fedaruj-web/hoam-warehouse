@@ -4653,32 +4653,36 @@ function SelectField({ label, name, options, defaultValue }: { label: string; na
 }
 
 function cleanDisplayText(value: unknown) {
-  return String(value ?? "Não informado")
-    .replaceAll("undefined", "Não informado")
-    .replaceAll("OperaÃ§Ãµes", "Operações")
-    .replaceAll("operaÃ§Ã£o", "operação")
-    .replaceAll("operaÃ§Ãµes", "operações")
-    .replaceAll("aprovaÃ§Ã£o", "aprovação")
-    .replaceAll("exposiÃ§Ã£o", "exposição")
-    .replaceAll("usuÃ¡rios", "usuários")
-    .replaceAll("CrÃ©dito", "Crédito")
-    .replaceAll("ComitÃª", "Comitê")
-    .replaceAll("VisÃ£o", "Visão")
-    .replaceAll("ImportaÃ§Ã£o", "Importação")
-    .replaceAll("ConfirmaÃ§Ã£o", "Confirmação")
-    .replaceAll("CobranÃ§a", "Cobrança")
-    .replaceAll("gestÃ£o", "gestão")
-    .replaceAll("anÃ¡lise", "análise")
-    .replaceAll("invÃ¡lido", "inválido")
-    .replaceAll("obrigatÃ³rio", "obrigatório")
-    .replaceAll("Opera??es", "Operações")
-    .replaceAll("opera??o", "operação")
-    .replaceAll("opera??es", "operações")
-    .replaceAll("aprova??o", "aprovação")
-    .replaceAll("exposi??o", "exposição")
-    .replaceAll("n??o", "não")
-    .replaceAll("N??o", "Não")
-    .replaceAll("usu??rios", "usuários");
+  const replacements: [RegExp, string][] = [
+    [/Opera(?:\u00c3\u00a7|\?\?)?(?:\u00c3\u00b5|\?\?)?es/g, "Operações"],
+    [/opera(?:\u00c3\u00a7|\?\?)(?:\u00c3\u00a3|\?\?)o/g, "operação"],
+    [/opera(?:\u00c3\u00a7|\?\?)(?:\u00c3\u00b5|\?\?)es/g, "operações"],
+    [/aprova(?:\u00c3\u00a7|\?\?)(?:\u00c3\u00a3|\?\?)o/g, "aprovação"],
+    [/exposi(?:\u00c3\u00a7|\?\?)(?:\u00c3\u00a3|\?\?)o/g, "exposição"],
+    [/confirma(?:\u00c3\u00a7|\?\?)(?:\u00c3\u00a3|\?\?)o/g, "confirmação"],
+    [/Confirma(?:\u00c3\u00a7|\?\?)(?:\u00c3\u00a3|\?\?)o/g, "Confirmação"],
+    [/Evid(?:\u00c3\u00aa|\?)ncia/g, "Evidência"],
+    [/evid(?:\u00c3\u00aa|\?)ncia/g, "evidência"],
+    [/Importa(?:\u00c3\u00a7|\?\?)(?:\u00c3\u00a3|\?\?)o/g, "Importação"],
+    [/importa(?:\u00c3\u00a7|\?\?)(?:\u00c3\u00a3|\?\?)o/g, "importação"],
+    [/Liquida(?:\u00c3\u00a7|\?\?)(?:\u00c3\u00a3|\?\?)o/g, "Liquidação"],
+    [/liquida(?:\u00c3\u00a7|\?\?)(?:\u00c3\u00a3|\?\?)o/g, "liquidação"],
+    [/Border(?:\u00c3\u00b4|\?)/g, "Borderô"],
+    [/usu(?:\u00c3\u00a1|\?\?)rios/g, "usuários"],
+    [/Usu(?:\u00c3\u00a1|\?\?)rios/g, "Usuários"],
+    [/Cr(?:\u00c3\u00a9|\?)dito/g, "Crédito"],
+    [/Comit(?:\u00c3\u00aa|\?)/g, "Comitê"],
+    [/Vis(?:\u00c3\u00a3|\?)o/g, "Visão"],
+    [/Cobran(?:\u00c3\u00a7|\?\?)(?:\u00c3\u00a3|\?\?)o/g, "Cobrança"],
+    [/gest(?:\u00c3\u00a3|\?)o/g, "gestão"],
+    [/an(?:\u00c3\u00a1|\?)lise/g, "análise"],
+    [/inv(?:\u00c3\u00a1|\?)lido/g, "inválido"],
+    [/obrigat(?:\u00c3\u00b3|\?)rio/g, "obrigatório"],
+    [/n(?:\u00c3\u00a3|\?\?)o/g, "não"],
+    [/N(?:\u00c3\u00a3|\?\?)o/g, "Não"],
+    [/\s\?\s/g, " · "],
+  ];
+  return replacements.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), String(value ?? "Não informado").replaceAll("undefined", "Não informado"));
 }
 
 function DetailModal({ detail, close }: { detail: DetailState; close: () => void }) {

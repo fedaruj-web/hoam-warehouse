@@ -59,7 +59,7 @@ export type DebtorInput = EntityInput & {
   observacoesOperacionais?: string;
 };
 
-const statuses = ["Ativo", "Em anÃ¡lise", "Monitorar", "Bloqueado", "Inativo"] as const;
+const statuses = ["Ativo", "Em análise", "Monitorar", "Bloqueado", "Inativo"] as const;
 
 export function onlyDigits(value: string) {
   return value.replace(/\D/g, "");
@@ -78,12 +78,12 @@ export function parseEntityInput(input: unknown): { data?: EntityInput; error?: 
   const valor = Number(record.valor ?? 0);
   const status = String(record.status ?? "Ativo") as EntityStatus;
 
-  if (nome.length < 3) return { error: "RazÃ£o social deve ter ao menos 3 caracteres." };
-  if (!doc) return { error: "CNPJ Ã© obrigatÃ³rio." };
-  if (!isValidCnpj(doc)) return { error: "CNPJ invÃ¡lido." };
-  if (!extra) return { error: "Campo complementar Ã© obrigatÃ³rio." };
+  if (nome.length < 3) return { error: "Razão social deve ter ao menos 3 caracteres." };
+  if (!doc) return { error: "CNPJ é obrigatório." };
+  if (!isValidCnpj(doc)) return { error: "CNPJ inválido." };
+  if (!extra) return { error: "Campo complementar é obrigatório." };
   if (!Number.isFinite(valor) || valor < 0) return { error: "Valor deve ser maior ou igual a zero." };
-  if (!statuses.includes(status as (typeof statuses)[number])) return { error: "Status invÃ¡lido." };
+  if (!statuses.includes(status as (typeof statuses)[number])) return { error: "Status inválido." };
 
   return { data: { nome, doc, extra, valor, status } };
 }
@@ -128,7 +128,7 @@ export function parseAssignorInput(input: unknown): { data?: AssignorInput; erro
   const record = input as Record<string, unknown>;
 
   const email = optionalString(record.email);
-  if (email && !isValidEmail(email)) return { error: "E-mail do cedente invÃ¡lido." };
+  if (email && !isValidEmail(email)) return { error: "E-mail do cedente inválido." };
 
   const uf = optionalString(record.uf)?.toUpperCase();
   if (uf && !/^[A-Z]{2}$/.test(uf)) return { error: "UF deve conter 2 letras." };
@@ -153,8 +153,8 @@ export function parseAssignorInput(input: unknown): { data?: AssignorInput; erro
       etapaOnboarding: optionalString(record.etapaOnboarding) ?? "Cadastro inicial",
       complianceStatus: optionalString(record.complianceStatus) ?? "Pendente",
       kycStatus: optionalString(record.kycStatus) ?? "Pendente",
-      consultaSancoes: optionalString(record.consultaSancoes) ?? "NÃ£o consultado",
-      exposicaoPep: optionalString(record.exposicaoPep) ?? "NÃ£o informado",
+      consultaSancoes: optionalString(record.consultaSancoes) ?? "Não consultado",
+      exposicaoPep: optionalString(record.exposicaoPep) ?? "Não informado",
       parecerCompliance: optionalString(record.parecerCompliance),
       ultimaRevisaoCompliance: optionalDate(record.ultimaRevisaoCompliance),
       procuradores: parseJsonField(record.procuradores),
@@ -170,9 +170,9 @@ export function parseDebtorInput(input: unknown): { data?: DebtorInput; error?: 
   const email = optionalString(record.email);
   const contatoFinanceiroEmail = optionalString(record.contatoFinanceiroEmail);
   const emailConfirmacao = optionalString(record.emailConfirmacao);
-  if (email && !isValidEmail(email)) return { error: "E-mail do sacado invÃ¡lido." };
-  if (contatoFinanceiroEmail && !isValidEmail(contatoFinanceiroEmail)) return { error: "E-mail do contato financeiro invÃ¡lido." };
-  if (emailConfirmacao && !isValidEmail(emailConfirmacao)) return { error: "E-mail de confirmaÃ§Ã£o invÃ¡lido." };
+  if (email && !isValidEmail(email)) return { error: "E-mail do sacado inválido." };
+  if (contatoFinanceiroEmail && !isValidEmail(contatoFinanceiroEmail)) return { error: "E-mail do contato financeiro inválido." };
+  if (emailConfirmacao && !isValidEmail(emailConfirmacao)) return { error: "E-mail de confirmação inválido." };
 
   const uf = optionalString(record.uf)?.toUpperCase();
   if (uf && !/^[A-Z]{2}$/.test(uf)) return { error: "UF deve conter 2 letras." };

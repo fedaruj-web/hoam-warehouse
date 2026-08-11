@@ -7,28 +7,28 @@ const groups = [
   {
     code: "admin",
     name: "Administrador",
-    description: "Acesso completo Ã  plataforma, usuÃ¡rios, permissÃµes e audit log.",
+    description: "Acesso completo à plataforma, usuários, permissões e audit log.",
     system: true,
   },
   {
     code: "credito",
-    name: "CrÃ©dito",
-    description: "AnÃ¡lise de cedentes, sacados e motor de elegibilidade.",
+    name: "Crédito",
+    description: "Análise de cedentes, sacados e motor de elegibilidade.",
   },
   {
     code: "operacoes",
-    name: "OperaÃ§Ãµes",
-    description: "ImportaÃ§Ã£o, compra de ativos e gestÃ£o operacional da carteira.",
+    name: "Operações",
+    description: "Importação, compra de ativos e gestão operacional da carteira.",
   },
   {
     code: "comite",
-    name: "ComitÃª",
-    description: "VisÃ£o executiva e aprovaÃ§Ã£o de exceÃ§Ãµes.",
+    name: "Comitê",
+    description: "Visão executiva e aprovação de exceções.",
   },
   {
     code: "consulta",
     name: "Consulta",
-    description: "Acesso somente leitura para acompanhamento e relatÃ³rios.",
+    description: "Acesso somente leitura para acompanhamento e relatórios.",
   },
   {
     code: "cedente-externo",
@@ -42,13 +42,13 @@ const modules = [
   "Dashboard",
   "Cedentes",
   "Sacados",
-  "ImportaÃ§Ã£o",
+  "Importação",
   "Elegibilidade",
   "Compra",
   "Carteira",
   "Documentos",
-  "RelatÃ³rios",
-  "UsuÃ¡rios",
+  "Relatórios",
+  "Usuários",
   "Audit log",
 ];
 
@@ -58,14 +58,14 @@ const users = [
   ["Felipe Martins", "felipe@hoam.com.br", "admin"],
   ["Marina Andrade", "marina@hoam.com.br", "credito"],
   ["Rafael Nogueira", "rafael@hoam.com.br", "operacoes"],
-  ["ComitÃª HOAM", "comite@hoam.com.br", "comite"],
+  ["Comitê HOAM", "comite@hoam.com.br", "comite"],
 ];
 
 const assignors = [
   ["CED-001", "Alvorada Alimentos S.A.", "12.345.678/0001-90", "Alimentos", 12_500_000, "ACTIVE"],
   ["CED-002", "Nexum Tecnologia Ltda.", "28.456.789/0001-12", "Tecnologia", 6_800_000, "ACTIVE"],
-  ["CED-003", "Grupo Monte Azul", "07.654.321/0001-45", "LogÃ­stica", 9_200_000, "REVIEW"],
-  ["CED-004", "VÃ©rtice IndÃºstria S.A.", "51.100.700/0001-22", "IndÃºstria", 15_000_000, "ACTIVE"],
+  ["CED-003", "Grupo Monte Azul", "07.654.321/0001-45", "Logística", 9_200_000, "REVIEW"],
+  ["CED-004", "Vértice Indústria S.A.", "51.100.700/0001-22", "Indústria", 15_000_000, "ACTIVE"],
 ];
 
 const debtors = [

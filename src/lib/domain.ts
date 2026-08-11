@@ -331,7 +331,7 @@ export function evaluateReceivable(
         ? debtorConfirmationContact
           ? String(debtorConfirmationContact)
           : "Sem contato financeiro ou canal de confirmação"
-        : "Sacado nÃ£o cadastrado",
+        : "Sacado não cadastrado",
     },
     {
       rule: "Status de confirmação do sacado",
