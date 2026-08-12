@@ -1561,3 +1561,316 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* HOAM light premium theme
+   Operational screens now prioritize readability: warm neutral background,
+   white cards, graphite typography, and gold used as a controlled accent. */
+:root {
+  --gold: #b8892f;
+  --gold-strong: #966d22;
+  --gold-soft: #f3e5c3;
+  --bg: #f4f1eb;
+  --card: #fffdf8;
+  --card-2: #f8f3ea;
+  --line: #ddd3c3;
+  --muted: #67717b;
+  --ink: #1d252c;
+  --ink-soft: #3c4650;
+  --success: #177245;
+  --warn: #9a6a12;
+  --danger: #b42318;
+}
+
+body {
+  background:
+    radial-gradient(circle at 18% 0%, rgba(184, 137, 47, 0.12), transparent 30%),
+    linear-gradient(180deg, #faf8f3 0%, var(--bg) 42%, #eee8dd 100%);
+  color: var(--ink);
+}
+
+.app,
+.main,
+.content {
+  background: transparent;
+  color: var(--ink);
+}
+
+.side {
+  background: linear-gradient(180deg, #fffdf8 0%, #f4efe5 100%);
+  border-right-color: var(--line);
+  box-shadow: 14px 0 34px rgba(56, 46, 28, 0.06);
+}
+
+.side .logo,
+.head h1,
+.entity,
+.group b,
+.pipe-card b,
+.pipe-head b,
+.audit b,
+.simulation-panel b,
+.confirm-summary b,
+.portal-user b,
+.portal-check b {
+  color: var(--ink);
+}
+
+.side small,
+.navlabel,
+.top span,
+.muted,
+.sub,
+.group small,
+.pipe-head small,
+.pipe-card small,
+.empty-pipe,
+.portal-hint,
+.portal-heading p,
+.portal-check small {
+  color: var(--muted);
+}
+
+.mark,
+.portal-brand span {
+  background: #fff8e8;
+  border-color: var(--gold);
+  color: var(--gold-strong);
+}
+
+.navsection {
+  border-bottom-color: #eadfce;
+}
+
+.nav::-webkit-scrollbar-thumb {
+  background: #d8cbb8;
+}
+
+.nav button {
+  color: #4f5a64;
+}
+
+.nav button.active,
+.nav button:hover {
+  background: #fff6e5;
+  color: var(--ink);
+  box-shadow: inset 3px 0 var(--gold);
+}
+
+.user {
+  background: transparent;
+  border-top-color: var(--line);
+  color: var(--ink-soft);
+}
+
+.top,
+.portal-topbar {
+  background: rgba(250, 248, 243, 0.9);
+  border-bottom-color: var(--line);
+  backdrop-filter: blur(16px);
+}
+
+.card,
+.kpi,
+.pipe-col,
+.portal-card,
+.portal-login-card form,
+.public-confirm-card,
+.modal,
+.confirm-summary div,
+.policy-version-card {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(248, 243, 234, 0.92));
+  border-color: var(--line);
+  box-shadow: 0 18px 45px rgba(48, 39, 22, 0.06);
+}
+
+.ctitle,
+.pipe-head,
+.confirm-form,
+.rule,
+.permission-row,
+.audit,
+td,
+th,
+.portal-check,
+.navsection {
+  border-color: var(--line);
+}
+
+.ctitle,
+.kpi label,
+th,
+.permission-head,
+.confirm-summary small,
+.portal-kpi label,
+.field label,
+.portal-login-card label,
+.portal-form label,
+.confirm-label {
+  color: #6b7280;
+}
+
+td,
+.permission-row,
+.group,
+.legend,
+.portal-trust,
+.confirm-accept {
+  color: var(--ink-soft);
+}
+
+.kpi b,
+.portal-kpi b,
+.flow b {
+  color: var(--ink);
+}
+
+.kpi small,
+.portal-check span {
+  color: var(--success);
+}
+
+.field input,
+.field select,
+.filters input,
+.portal-login-card input,
+.portal-form input,
+.portal-form select,
+.portal-form textarea,
+.confirm-form textarea,
+.user select {
+  background: #fffefb;
+  border-color: #d6cbb9;
+  color: var(--ink);
+}
+
+.field input:focus,
+.field select:focus,
+.filters input:focus,
+.portal-login-card input:focus,
+.portal-form input:focus,
+.portal-form select:focus,
+.portal-form textarea:focus,
+.confirm-form textarea:focus,
+.user select:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(184, 137, 47, 0.15);
+  outline: none;
+}
+
+.btn,
+.mini,
+.confirm-choice button {
+  background: #fffdf8;
+  border-color: #d5c8b5;
+  color: var(--ink);
+}
+
+.btn:hover,
+.mini:hover,
+.confirm-choice button:hover {
+  background: #fff6e5;
+  border-color: var(--gold);
+}
+
+.btn.gold,
+.portal-form .btn.gold,
+.portal-login-card .btn.gold {
+  background: linear-gradient(135deg, #d6b464, var(--gold));
+  border-color: var(--gold);
+  color: #241807;
+  box-shadow: 0 10px 22px rgba(184, 137, 47, 0.22);
+}
+
+.badge {
+  background: #eaf7ef;
+  border-color: #b6dfc5;
+  color: var(--success);
+}
+
+.badge.warn,
+.portal-check.pending span {
+  background: #fff6df;
+  border-color: #ead29a;
+  color: var(--warn);
+}
+
+.badge.danger,
+.portal-alert.danger {
+  background: #fff0ee;
+  border-color: #f1b8b2;
+  color: var(--danger);
+}
+
+.portal-alert {
+  background: #edf8f1;
+  border-color: #b7dfc7;
+  color: var(--success);
+}
+
+.flow div,
+.group,
+.pipe-card,
+.empty-pipe,
+.permission-matrix,
+.checkcell i,
+.upload,
+.portal-check em {
+  background: rgba(255, 253, 248, 0.7);
+  border-color: var(--line);
+  color: var(--ink-soft);
+}
+
+.flow div:first-child,
+.group.active,
+.group:hover {
+  background: #fff6e5;
+  border-color: #e0c47f;
+  color: var(--ink);
+}
+
+.group em,
+.eye,
+.ctitle span,
+.pipe-action {
+  color: var(--gold-strong);
+}
+
+.donut {
+  background: conic-gradient(var(--gold) 0 42%, #9aa3ad 42% 67%, #c8d0d8 67% 83%, #e6dccb 83%);
+}
+
+.donut::after {
+  background: var(--card);
+}
+
+.modalback {
+  background: rgba(36, 29, 19, 0.36);
+  backdrop-filter: blur(6px);
+}
+
+.hero,
+.portal-hero {
+  background:
+    radial-gradient(circle at 28% 32%, rgba(184, 137, 47, 0.2), transparent 32%),
+    linear-gradient(135deg, #fffaf0 0%, #efe5d2 48%, #e7ddcc 100%);
+  color: var(--ink);
+}
+
+.hero p,
+.portal-hero p {
+  color: var(--ink-soft);
+}
+
+.hero em {
+  color: var(--gold-strong);
+}
+
+.login,
+.portal-shell,
+.portal-app,
+.public-confirm {
+  background:
+    radial-gradient(circle at 18% 10%, rgba(184, 137, 47, 0.14), transparent 30%),
+    linear-gradient(180deg, #fbf8f1 0%, #f1ebe1 100%);
+  color: var(--ink);
+}
