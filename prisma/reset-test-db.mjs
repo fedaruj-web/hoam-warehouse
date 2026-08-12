@@ -120,6 +120,13 @@ function hashPassword(password) {
 
 async function clearData() {
   await prisma.$transaction([
+    prisma.userInviteToken.deleteMany(),
+    prisma.confirmationToken.deleteMany(),
+    prisma.purchaseTicketItem.deleteMany(),
+    prisma.purchaseTicket.deleteMany(),
+    prisma.cessionOperationEvent.deleteMany(),
+    prisma.cessionOperation.deleteMany(),
+    prisma.registryCheck.deleteMany(),
     prisma.eligibilityEvaluation.deleteMany(),
     prisma.workflowTransition.deleteMany(),
     prisma.purchaseItem.deleteMany(),
