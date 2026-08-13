@@ -4,6 +4,7 @@ import type {
   Assignor,
   Audit,
   Debtor,
+  EligibilityPolicy,
   EligibilityCheck,
   AcquisitionPricing,
   PermissionAction,
@@ -13,6 +14,29 @@ import type {
 
 export const DEFAULT_ACQUISITION_ANNUAL_RATE = 0.285;
 export const DEFAULT_SERVICE_FEE_BPS = 0;
+
+export const DEFAULT_ELIGIBILITY_POLICY: EligibilityPolicy = {
+  code: "POL-WH-ELIG",
+  name: "Política de Elegibilidade Warehouse",
+  version: 15,
+  effectiveAt: "2026-07-08",
+  minFaceValue: 1000,
+  maxTenorDays: 120,
+  minDebtorRating: "BBB",
+  requireConfirmation: true,
+  pendingConfirmationBehavior: "review",
+  baseMonthlyRatePercent: 2.11,
+  riskSpreadPercent: 0,
+  serviceFeeBps: DEFAULT_SERVICE_FEE_BPS,
+};
+
+const ratingOrder = ["AAA", "AA", "A", "BBB", "BB", "B", "CCC", "CC", "C", "D", "Sem rating"];
+
+function ratingMeetsMinimum(rating: string | null | undefined, minimum: string) {
+  const currentIndex = ratingOrder.indexOf(rating || "Sem rating");
+  const minimumIndex = ratingOrder.indexOf(minimum);
+  return currentIndex >= 0 && minimumIndex >= 0 && currentIndex <= minimumIndex;
+}
 
 export const fmt = (n: number) =>
   n.toLocaleString("pt-BR", {
@@ -289,6 +313,7 @@ export function evaluateReceivable(
   receivable: Receivable,
   assignors: Assignor[],
   debtors: Debtor[],
+  policy: EligibilityPolicy = DEFAULT_ELIGIBILITY_POLICY,
 ) {
   const assignor = assignors.find((item) => item.nome === receivable.ced);
   const debtor = debtors.find((item) => item.nome === receivable.sac);
@@ -312,18 +337,18 @@ export function evaluateReceivable(
       message: debtor ? `Status ${debtor.status}` : "Sacado não cadastrado",
     },
     {
-      rule: "Prazo máximo 120 dias",
-      passed: days > 0 && days <= 120,
+      rule: `Prazo máximo ${policy.maxTenorDays} dias`,
+      passed: days > 0 && days <= policy.maxTenorDays,
       message: `${days} dias até o vencimento`,
     },
     {
-      rule: "Valor mínimo R$ 1 mil",
-      passed: receivable.valor >= 1000,
+      rule: `Valor mínimo ${fmt(policy.minFaceValue)}`,
+      passed: receivable.valor >= policy.minFaceValue,
       message: fmt(receivable.valor),
     },
     {
-      rule: "Rating mínimo BBB",
-      passed: Boolean(debtor && ["AAA", "AA", "A", "BBB"].includes(debtor.rating)),
+      rule: `Rating mínimo ${policy.minDebtorRating}`,
+      passed: Boolean(debtor && ratingMeetsMinimum(debtor.rating, policy.minDebtorRating)),
       message: debtor?.rating ?? "Sem rating",
     },
     {
@@ -337,7 +362,7 @@ export function evaluateReceivable(
     },
     {
       rule: "Status de confirmação do sacado",
-      passed: Boolean(debtor && ["Confirmado", "Dispensado"].includes(debtorConfirmationStatus)),
+      passed: Boolean(debtor && (!policy.requireConfirmation || ["Confirmado", "Dispensado"].includes(debtorConfirmationStatus) || (debtorConfirmationStatus === "Pendente" && policy.pendingConfirmationBehavior === "approve"))),
       message: debtor ? `Confirmação ${debtorConfirmationStatus}` : "Sacado não cadastrado",
     },
     {
@@ -354,7 +379,7 @@ export function evaluateReceivable(
   const status: ReceivableStatus = debtorConfirmationHardFail ? "Inelegível" : checks.every((check) => check.passed)
     ? "Elegível"
     : score >= 70
-      ? "Revisão"
+      ? policy.pendingConfirmationBehavior === "block" ? "Inelegível" : "Revisão"
       : "Inelegível";
 
   return { status, checks, score };
@@ -364,10 +389,11 @@ export function runEligibility(
   receivables: Receivable[],
   assignors: Assignor[],
   debtors: Debtor[],
+  policy: EligibilityPolicy = DEFAULT_ELIGIBILITY_POLICY,
 ) {
   return receivables.map((receivable) => {
     if (receivable.status === "Comprado" || receivable.status === "Liquidado") return receivable;
-    const eligibility = evaluateReceivable(receivable, assignors, debtors);
+    const eligibility = evaluateReceivable(receivable, assignors, debtors, policy);
     return { ...receivable, status: eligibility.status, eligibility };
   });
 }

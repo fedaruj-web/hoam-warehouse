@@ -13,7 +13,7 @@ export async function GET() {
 
   const receivables = await db.receivable.findMany({
     where: { deletedAt: null },
-    include: { assignor: true, debtor: true, batch: true, portfolio: true },
+    include: { assignor: true, debtor: true, batch: true, portfolio: true, evaluations: { include: { rule: true } } },
     orderBy: { createdAt: "desc" },
   });
 

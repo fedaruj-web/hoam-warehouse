@@ -113,6 +113,7 @@ type PrismaReceivable = {
   batch?: { code: string } | null;
   assignor?: { legalName: string } | null;
   debtor?: { legalName: string; rating?: string | null } | null;
+  evaluations?: { passed: boolean; message: string | null; rule: { name: string } }[];
   portfolio?: {
     acquisitionValue: { toNumber?: () => number } | number;
     outstandingValue: { toNumber?: () => number } | number;
@@ -359,6 +360,17 @@ export function mapReceivable(item: PrismaReceivable): Receivable {
     confirmedAt: item.confirmedAt ? formatDate(item.confirmedAt) : null,
     confirmedById: item.confirmedById ?? null,
     batchId: item.batch?.code,
+    eligibility: item.evaluations
+      ? {
+          status: receivableStatusToUi[item.status] ?? "Importado",
+          checks: item.evaluations.map((evaluation) => ({
+            rule: evaluation.rule.name,
+            passed: evaluation.passed,
+            message: evaluation.message ?? "",
+          })),
+          score: item.evaluations.length ? Math.round((item.evaluations.filter((evaluation) => evaluation.passed).length / item.evaluations.length) * 100) : 0,
+        }
+      : undefined,
     deletedAt: item.deletedAt?.toISOString() ?? null,
   };
 }

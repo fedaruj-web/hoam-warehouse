@@ -183,6 +183,23 @@ export type EligibilityResult = {
   score: number;
 };
 
+export type EligibilityPendingBehavior = "review" | "block" | "approve";
+
+export type EligibilityPolicy = {
+  code: string;
+  name: string;
+  version: number;
+  effectiveAt: string;
+  minFaceValue: number;
+  maxTenorDays: number;
+  minDebtorRating: string;
+  requireConfirmation: boolean;
+  pendingConfirmationBehavior: EligibilityPendingBehavior;
+  baseMonthlyRatePercent: number;
+  riskSpreadPercent: number;
+  serviceFeeBps: number;
+};
+
 export type AcquisitionPricing = {
   faceValue: number;
   baseAnnualRate: number;

@@ -44,6 +44,7 @@ import {
 } from "@/lib/mock-data";
 import {
   DEFAULT_ACQUISITION_ANNUAL_RATE,
+  DEFAULT_ELIGIBILITY_POLICY,
   DEFAULT_SERVICE_FEE_BPS,
   buildDemoCsv,
   createAudit,
@@ -70,6 +71,7 @@ import type {
   DocumentRecord,
   DocumentChecklist,
   FundingIssue,
+  EligibilityPolicy,
   ImportBatch,
   Modal,
   PermissionAction,
@@ -372,12 +374,13 @@ export default function Home() {
   const [confirmationLinks, setConfirmationLinks] = useState<Record<string, ConfirmationLinkState>>({});
   const [q, setQ] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  const [eligibilityPolicy, setEligibilityPolicy] = useState<EligibilityPolicy>(DEFAULT_ELIGIBILITY_POLICY);
   const [annualRate, setAnnualRate] = useState(DEFAULT_ACQUISITION_ANNUAL_RATE * 100);
   const [serviceFeeBps, setServiceFeeBps] = useState(DEFAULT_SERVICE_FEE_BPS);
 
   async function refreshOperationalData() {
     try {
-      const [assignorsRes, debtorsRes, batchesRes, receivablesRes, documentsRes, checklistRes, registryChecksRes, cashAccountsRes, cashMovementsRes, bankStatementRes, fundingRes, auditsRes, usersRes, groupsRes, confirmationLinksRes, cessionOpsRes] = await Promise.all([
+      const [assignorsRes, debtorsRes, batchesRes, receivablesRes, documentsRes, checklistRes, registryChecksRes, cashAccountsRes, cashMovementsRes, bankStatementRes, fundingRes, auditsRes, usersRes, groupsRes, confirmationLinksRes, cessionOpsRes, eligibilityPolicyRes] = await Promise.all([
         fetch("/api/assignors"),
         fetch("/api/debtors"),
         fetch("/api/import-batches"),
@@ -394,6 +397,7 @@ export default function Home() {
         fetch("/api/permission-groups"),
         fetch("/api/confirmation-links"),
         fetch("/api/cession-operations"),
+        fetch("/api/eligibility-policy"),
       ]);
       if (assignorsRes.ok) setAssignors(await assignorsRes.json());
       if (debtorsRes.ok) setDebtors(await debtorsRes.json());
@@ -414,6 +418,12 @@ export default function Home() {
         setConfirmationLinks(Object.fromEntries(links.map((item) => [item.receivableId, item])));
       }
       if (cessionOpsRes.ok) setCessionOperations(await cessionOpsRes.json());
+      if (eligibilityPolicyRes.ok) {
+        const policy = await eligibilityPolicyRes.json();
+        setEligibilityPolicy(policy);
+        setAnnualRate(monthlyPercentToAnnualPercent(Number(policy.baseMonthlyRatePercent ?? DEFAULT_ELIGIBILITY_POLICY.baseMonthlyRatePercent) + Number(policy.riskSpreadPercent ?? DEFAULT_ELIGIBILITY_POLICY.riskSpreadPercent)));
+        setServiceFeeBps(Number(policy.serviceFeeBps ?? DEFAULT_SERVICE_FEE_BPS));
+      }
     } catch {
       setNotice("Operando com dados demonstrativos locais. Banco indisponível no momento.");
     }
@@ -955,16 +965,30 @@ export default function Home() {
   async function runRules() {
     if (!requirePermission("Elegibilidade", "approve", "motor")) return;
     try {
-      const response = await persistJson<{ receivables: Receivable[]; updated: number }>("/api/eligibility/run", {
+      const response = await persistJson<{ receivables: Receivable[]; updated: number; policy?: EligibilityPolicy }>("/api/eligibility/run", {
         method: "POST",
       });
       setReceivables(response.receivables);
+      if (response.policy) setEligibilityPolicy(response.policy);
       await refreshAudits();
       setNotice(`${response.updated} ativos reprocessados pelo motor de elegibilidade.`);
     } catch {
-      setReceivables((items) => runEligibility(items, assignors, debtors));
+      setReceivables((items) => runEligibility(items, assignors, debtors, eligibilityPolicy));
       audit("ELIGIBILITY_ENGINE_RUN", `${activeReceivables.length} ativos`);
     }
+  }
+
+  async function saveEligibilityPolicy(policy: EligibilityPolicy) {
+    if (!requirePermission("Elegibilidade", "approve", "policy")) return;
+    const persisted = await persistJson<EligibilityPolicy>("/api/eligibility-policy", {
+      method: "PUT",
+      body: JSON.stringify(policy),
+    });
+    setEligibilityPolicy(persisted);
+    setAnnualRate(monthlyPercentToAnnualPercent(persisted.baseMonthlyRatePercent + persisted.riskSpreadPercent));
+    setServiceFeeBps(persisted.serviceFeeBps);
+    await refreshAudits();
+    setNotice(`Política de elegibilidade v${persisted.version} salva. Reprocesse o motor para aplicar aos ativos.`);
   }
 
   async function updateReceivableConfirmation(e: FormEvent<HTMLFormElement>) {
@@ -1595,7 +1619,7 @@ export default function Home() {
               onGenerateLink={generateConfirmationLink}
             />
           )}
-          {view === "elegibilidade" && <EligibilityPage receivables={activeReceivables} owned={owned} runRules={runRules} />}
+          {view === "elegibilidade" && <EligibilityPage key={`${eligibilityPolicy.version}-${eligibilityPolicy.effectiveAt}`} policy={eligibilityPolicy} receivables={activeReceivables} owned={owned} runRules={runRules} savePolicy={saveEligibilityPolicy} />}
           {view === "risco" && <RiskCovenantsPage assignors={assignors} debtors={debtors} fundingIssues={fundingIssues} receivables={activeReceivables} />}
           {view === "comite" && <CommitteePage receivables={activeReceivables} onDecide={(item) => { setCommitteeReceivable(item); setModal("comite"); }} />}
           {view === "compra" && (
@@ -2817,22 +2841,50 @@ function ConfirmationPage({
   </>;
 }
 
-function EligibilityPage({ receivables, owned, runRules }: { receivables: Receivable[]; owned: Receivable[]; runRules: () => void }) {
+function EligibilityPage({ policy, receivables, owned, runRules, savePolicy }: { policy: EligibilityPolicy; receivables: Receivable[]; owned: Receivable[]; runRules: () => void; savePolicy: (policy: EligibilityPolicy) => Promise<void> | void }) {
+  const [draft, setDraft] = useState(policy);
   const eligible = receivables.filter((item) => item.status === "Elegível").length;
   const evaluated = receivables.filter((item) => item.eligibility).length;
   const averageScore = evaluated ? Math.round(receivables.reduce((sum, item) => sum + (item.eligibility?.score ?? 0), 0) / evaluated) : 0;
-  const policyRules = [
-    "Cedente ativo",
-    "Sacado ativo",
-    "Prazo máximo 120 dias",
-    "Rating mínimo BBB",
-    "Contato de confirmação do sacado",
-    "Status de confirmação do sacado",
-    "Limite disponível",
-  ];
+  const currentRate = policy.baseMonthlyRatePercent + policy.riskSpreadPercent;
+  const projectedAnnualRate = monthlyPercentToAnnualPercent(currentRate);
+  const failedRows = receivables
+    .filter((item) => item.eligibility?.checks?.some((check) => !check.passed))
+    .map((item) => ({ item, failed: item.eligibility?.checks.filter((check) => !check.passed) ?? [] }));
+
+  function updateDraft<K extends keyof EligibilityPolicy>(key: K, value: EligibilityPolicy[K]) {
+    setDraft((current) => ({ ...current, [key]: value }));
+  }
+
   return <>
     <div className="kpis"><K label="Títulos analisados" v={String(receivables.length)} /><K label="Valor total" v={fmt(receivables.reduce((a, d) => a + d.valor, 0))} /><K label="Elegíveis" v={`${Math.round((eligible / Math.max(receivables.length, 1)) * 100)}%`} /><K label="Score médio" v={`${averageScore}%`} /></div>
-    <div className="grid"><Assets ds={receivables} owned={owned.map((item) => item.id)} /><div className="card"><div className="ctitle">Política v1.5 · motor versionado</div><div className="policy-version-card"><span>POL-WH-ELIG</span><b>Versão 15 · vigente desde 08/07/2026</b><small>Snapshot da política é gravado em cada avaliação e no audit log do processamento.</small></div>{policyRules.map((x) => <div className="rule" key={x}>{x}<Check size={14} color="#70c69a" /></div>)}<div className="note">Divergência ou bloqueio na confirmação torna o ativo inelegível. Pendência, ausência de contato ou sem resposta direciona para revisão.</div><div className="actions"><button className="btn gold" onClick={runRules}>Reprocessar elegibilidade</button></div></div></div>
+    <div className="grid"><Assets ds={receivables} owned={owned.map((item) => item.id)} /><div className="card"><div className="ctitle">Parâmetros da política</div><div className="policy-version-card"><span>{policy.code}</span><b>Versão {policy.version} · vigente desde {formatIsoDate(policy.effectiveAt)}</b><small>Taxa alvo {policy.baseMonthlyRatePercent.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}% a.m. + spread {policy.riskSpreadPercent.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}% a.m. · {projectedAnnualRate.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}% a.a. efetiva</small></div>
+        <div className="policy-form">
+          <label>Rating mínimo<select value={draft.minDebtorRating} onChange={(e) => updateDraft("minDebtorRating", e.target.value)}>{["AAA", "AA", "A", "BBB", "BB", "B", "Sem rating"].map((rating) => <option key={rating}>{rating}</option>)}</select></label>
+          <label>Prazo máximo<input type="number" min="1" value={draft.maxTenorDays} onChange={(e) => updateDraft("maxTenorDays", Number(e.target.value))} /></label>
+          <label>Valor mínimo<input type="number" min="0" value={draft.minFaceValue} onChange={(e) => updateDraft("minFaceValue", Number(e.target.value))} /></label>
+          <label>Confirmação<select value={draft.requireConfirmation ? "yes" : "no"} onChange={(e) => updateDraft("requireConfirmation", e.target.value === "yes")}><option value="yes">Obrigatória</option><option value="no">Não obrigatória</option></select></label>
+          <label>Se pendente<select value={draft.pendingConfirmationBehavior} onChange={(e) => updateDraft("pendingConfirmationBehavior", e.target.value as EligibilityPolicy["pendingConfirmationBehavior"])}><option value="review">Enviar para revisão</option><option value="block">Bloquear</option><option value="approve">Permitir</option></select></label>
+          <label>Taxa base mensal (%)<input type="number" step="0.01" min="0" value={draft.baseMonthlyRatePercent} onChange={(e) => updateDraft("baseMonthlyRatePercent", Number(e.target.value))} /></label>
+          <label>Spread política (%)<input type="number" step="0.01" min="0" value={draft.riskSpreadPercent} onChange={(e) => updateDraft("riskSpreadPercent", Number(e.target.value))} /></label>
+          <label>Custos (bps)<input type="number" step="1" min="0" value={draft.serviceFeeBps} onChange={(e) => updateDraft("serviceFeeBps", Number(e.target.value))} /></label>
+        </div>
+        <div className="note">A taxa salva aqui alimenta a política de risco e sincroniza os parâmetros de aquisição. Após salvar, rode o motor para recalcular os ativos.</div>
+        <div className="actions"><button className="btn" onClick={() => setDraft(policy)}>Descartar</button><button className="btn gold" onClick={() => savePolicy(draft)}>Salvar parâmetros</button><button className="btn gold" onClick={runRules}>Reprocessar elegibilidade</button></div></div></div>
+    <div className="card">
+      <div className="ctitle">Motivos de reprovação / revisão</div>
+      <Table heads={["Ativo", "Status", "Score", "Critérios não atendidos"]}>
+        {failedRows.map(({ item, failed }) => (
+          <tr key={item.id}>
+            <td><div className="entity">{item.id}</div><div className="sub">{item.ced} / {item.sac}</div></td>
+            <td><Badge v={item.status} /></td>
+            <td>{item.eligibility?.score ?? 0}%</td>
+            <td>{failed.map((check) => <div className="eligibility-failure" key={`${item.id}-${check.rule}`}><b>{check.rule}</b><span>{check.message}</span></div>)}</td>
+          </tr>
+        ))}
+      </Table>
+      {!failedRows.length && <div className="note">Nenhum motivo de reprovação persistido. Rode o motor para gerar o diagnóstico por ativo.</div>}
+    </div>
   </>;
 }
 

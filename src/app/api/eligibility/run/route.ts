@@ -5,18 +5,12 @@ import { requirePermission } from "@/server/authz";
 import { getDbOrNull } from "@/server/db";
 import { mapAssignor, mapDebtor, mapReceivable, receivableStatusToPrisma } from "@/server/entities";
 import { writeAudit } from "@/server/audit";
-
-const activePolicy = {
-  code: "POL-WH-ELIG",
-  name: "Política de Elegibilidade Warehouse",
-  version: 15,
-  label: "Política v1.5 · confirmação, limite e concentração",
-  effectiveAt: "2026-07-08",
-};
+import { getActiveEligibilityPolicy } from "@/server/eligibility-policy";
 
 async function getOrCreateRule(
   db: NonNullable<ReturnType<typeof getDbOrNull>>,
   name: string,
+  activePolicy: Awaited<ReturnType<typeof getActiveEligibilityPolicy>>,
 ) {
   const existing = await db.eligibilityRule.findFirst({
     where: { name, version: activePolicy.version, deletedAt: null },
@@ -51,11 +45,12 @@ export async function POST() {
 
   const assignors = receivables.map((item) => mapAssignor(item.assignor));
   const debtors = receivables.map((item) => mapDebtor(item.debtor));
+  const activePolicy = await getActiveEligibilityPolicy(db);
   const updated = [];
 
   for (const item of receivables) {
     const uiReceivable = mapReceivable(item);
-    const result = evaluateReceivable(uiReceivable, assignors, debtors);
+    const result = evaluateReceivable(uiReceivable, assignors, debtors, activePolicy);
     const status = (receivableStatusToPrisma[result.status] ?? "REVIEW") as PrismaReceivableStatus;
 
     const persisted = await db.receivable.update({
@@ -75,7 +70,7 @@ export async function POST() {
     });
 
     for (const check of result.checks) {
-      const rule = await getOrCreateRule(db, check.rule);
+      const rule = await getOrCreateRule(db, check.rule, activePolicy);
       await db.eligibilityEvaluation.upsert({
         where: {
           receivableId_ruleId: {
@@ -101,7 +96,7 @@ export async function POST() {
       });
     }
 
-    updated.push(mapReceivable(persisted));
+    updated.push({ ...mapReceivable(persisted), eligibility: result });
   }
 
   await writeAudit(db, {
