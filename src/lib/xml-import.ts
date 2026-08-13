@@ -93,7 +93,11 @@ function buildAddress(addressBlock: string) {
   const number = readTag(addressBlock, "nro");
   const complement = readTag(addressBlock, "xCpl");
   const district = readTag(addressBlock, "xBairro");
-  return [street, number, complement, district].filter(Boolean).join(", ") || null;
+  const zipCode = readTag(addressBlock, "CEP");
+  const country = readTag(addressBlock, "xPais");
+  const base = [street, number, complement, district].filter(Boolean).join(", ");
+  const extra = [zipCode ? `CEP ${zipCode}` : "", country].filter(Boolean).join(" · ");
+  return [base, extra].filter(Boolean).join(" · ") || null;
 }
 
 function toDebtorUi(draft: XmlDebtorDraft): Debtor {
