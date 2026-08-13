@@ -9,6 +9,16 @@ import { writeAudit } from "@/server/audit";
 import { DOCUMENT_BUCKET, ensureDocumentBucket, getStorageClient } from "@/server/storage";
 import type { PrismaClient } from "@prisma/client";
 
+function compactTaxId(value?: string | null) {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
+function sameTaxId(left?: string | null, right?: string | null) {
+  const normalizedLeft = compactTaxId(left);
+  const normalizedRight = compactTaxId(right);
+  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
+}
+
 function nextBatchCode(count: number) {
   return `LOT-${String(count + 1).padStart(3, "0")}`;
 }
@@ -200,7 +210,9 @@ export async function POST(request: Request) {
 
     if (xml) {
       for (const debtorDraft of parsed.debtors) {
-        const existingDebtor = await tx.debtor.findUnique({ where: { taxId: debtorDraft.taxId } });
+        const debtorTaxId = compactTaxId(debtorDraft.taxId);
+        const exactDebtor = await tx.debtor.findUnique({ where: { taxId: debtorTaxId } });
+        const existingDebtor = exactDebtor ?? (await tx.debtor.findMany({ where: { deletedAt: null } })).find((item) => sameTaxId(item.taxId, debtorTaxId));
         const debtorData = {
           legalName: debtorDraft.legalName,
           tradeName: debtorDraft.tradeName,
@@ -216,6 +228,7 @@ export async function POST(request: Request) {
           confirmationChannel: "E-mail",
           confirmationStatus: "Pendente",
           operationalNotes: "Sacado criado/atualizado automaticamente na importação de XML NF-e.",
+          taxId: debtorTaxId,
           status: "ACTIVE" as const,
         };
         const debtor = existingDebtor
@@ -223,7 +236,6 @@ export async function POST(request: Request) {
           : await tx.debtor.create({
               data: {
                 code: nextDebtorCode(debtorCount++),
-                taxId: debtorDraft.taxId,
                 rating: "Sem rating",
                 exposureLimit: 0,
                 ...debtorData,
@@ -233,18 +245,20 @@ export async function POST(request: Request) {
       }
     }
 
+    const [assignors, debtors] = await Promise.all([
+      tx.assignor.findMany({ where: { deletedAt: null } }),
+      tx.debtor.findMany({ where: { deletedAt: null } }),
+    ]);
     const createdReceivables = [];
     for (const item of parsed.receivables) {
-      const assignorTaxId = "assignorTaxId" in item ? item.assignorTaxId : null;
-      const debtorTaxId = "debtorTaxId" in item ? item.debtorTaxId : null;
-      const [assignor, debtor] = await Promise.all([
-        assignorTaxId
-          ? tx.assignor.findFirst({ where: { taxId: assignorTaxId, deletedAt: null } })
-          : tx.assignor.findFirst({ where: { legalName: item.ced, deletedAt: null } }),
-        debtorTaxId
-          ? tx.debtor.findFirst({ where: { taxId: debtorTaxId, deletedAt: null } })
-          : tx.debtor.findFirst({ where: { legalName: item.sac, deletedAt: null } }),
-      ]);
+      const assignorTaxId = "assignorTaxId" in item ? compactTaxId(item.assignorTaxId) : null;
+      const debtorTaxId = "debtorTaxId" in item ? compactTaxId(item.debtorTaxId) : null;
+      const assignor = assignorTaxId
+        ? assignors.find((candidate) => sameTaxId(candidate.taxId, assignorTaxId))
+        : assignors.find((candidate) => candidate.legalName === item.ced);
+      const debtor = debtorTaxId
+        ? debtors.find((candidate) => sameTaxId(candidate.taxId, debtorTaxId))
+        : debtors.find((candidate) => candidate.legalName === item.sac);
 
       if (!assignor || !debtor) {
         if (!assignor && xml) parsed.errors.push(`Duplicata ${item.id}: cedente do XML (${item.ced}) não encontrado. Cadastre o cedente antes da importação.`);
