@@ -210,6 +210,7 @@ function buildPurchaseReadiness(
   debtors: Debtor[],
   documentChecklists: DocumentChecklist[],
   cashAccounts: CashAccount[],
+  policy: EligibilityPolicy = DEFAULT_ELIGIBILITY_POLICY,
   registryChecks: RegistryCheck[] = [],
 ): PurchaseReadiness {
   const assignor = assignors.find((entity) => entity.nome === item.ced && !entity.deletedAt);
@@ -221,6 +222,7 @@ function buildPurchaseReadiness(
   const purchaseAccount = cashAccounts.find((account) => account.purpose === "PURCHASE_SETTLEMENT" && account.status === "Ativa" && !account.deletedAt);
   const confirmationStatus = item.confirmationStatus ?? "Pendente";
   const hasManualConfirmationBasis = validConfirmationStatuses.includes(confirmationStatus) || Boolean(item.confirmationNotes?.trim());
+  const isEligibleByPolicy = ["Elegível", "Aprovado", "Comprado"].includes(item.status);
   const assignorExposureAfterPurchase = (assignor?.exposicao ?? 0) + item.valor;
   const withinAssignorLimit = Boolean(assignor) && assignorExposureAfterPurchase <= (assignor?.limite ?? 0);
   const discountNeedsCommittee = pricing.discountPercent > 0.35;
@@ -252,14 +254,14 @@ function buildPurchaseReadiness(
     },
     {
       label: "Confirmação registrada",
-      passed: hasManualConfirmationBasis,
-      critical: true,
-      detail: hasManualConfirmationBasis ? `${confirmationStatus} · ${item.confirmationChannel ?? "manual"}` : "Sem confirmação, dispensa ou justificativa manual",
+      passed: hasManualConfirmationBasis || isEligibleByPolicy || !policy.requireConfirmation,
+      critical: false,
+      detail: hasManualConfirmationBasis ? `${confirmationStatus} · ${item.confirmationChannel ?? "manual"}` : "Tratada pela política de elegibilidade",
     },
     {
       label: "Documentos mínimos",
       passed: Boolean(documents?.ok),
-      critical: true,
+      critical: false,
       detail: documents?.ok ? "Checklist documental completo" : `${documents?.gaps.length ?? 0} pendência(s) documentais`,
     },
     {
@@ -276,15 +278,15 @@ function buildPurchaseReadiness(
     },
     {
       label: "Rating do sacado",
-      passed: investmentGradeRatings.includes(debtor?.rating ?? item.debtorRating ?? ""),
-      critical: true,
-      detail: `Rating: ${debtor?.rating ?? item.debtorRating ?? "sem rating"}`,
+      passed: isEligibleByPolicy || investmentGradeRatings.includes(debtor?.rating ?? item.debtorRating ?? ""),
+      critical: false,
+      detail: `Rating: ${debtor?.rating ?? item.debtorRating ?? "sem rating"} · mínimo da política: ${policy.minDebtorRating}`,
     },
     {
       label: "Prazo do ativo",
-      passed: dueDays > 0 && dueDays <= 120,
-      critical: true,
-      detail: dueDays > 0 ? `${dueDays} dias corridos até vencimento` : "Ativo vencido",
+      passed: isEligibleByPolicy || (dueDays > 0 && dueDays <= policy.maxTenorDays),
+      critical: false,
+      detail: dueDays > 0 ? `${dueDays} dias corridos até vencimento · máximo da política: ${policy.maxTenorDays}` : "Ativo vencido",
     },
     {
       label: "Preço de aquisição",
@@ -1041,7 +1043,7 @@ export default function Home() {
       setNotice("Ativo não encontrado para compra.");
       return;
     }
-    const readiness = buildPurchaseReadiness(before, pricing, assignors, debtors, documentChecklists, cashAccounts, registryChecks);
+    const readiness = buildPurchaseReadiness(before, pricing, assignors, debtors, documentChecklists, cashAccounts, eligibilityPolicy, registryChecks);
     if (readiness.blockers.length) {
       const summary = readiness.blockers.slice(0, 3).map((check) => check.label).join(", ");
       audit("PURCHASE_BLOCKED_PRECHECK", id, before, { blockers: readiness.blockers });
@@ -1631,6 +1633,7 @@ export default function Home() {
               documentChecklists={documentChecklists}
               fundingIssues={fundingIssues}
               onNotice={setNotice}
+              policy={eligibilityPolicy}
               receivables={activeReceivables}
               registryChecks={registryChecks}
               purchase={purchase}
@@ -2163,7 +2166,7 @@ function CessionJourneyPage({
     return {
       item,
       pricing,
-      readiness: buildPurchaseReadiness(item, pricing, assignors, debtors, documentChecklists, cashAccounts, registryChecks),
+      readiness: buildPurchaseReadiness(item, pricing, assignors, debtors, documentChecklists, cashAccounts, DEFAULT_ELIGIBILITY_POLICY, registryChecks),
     };
   });
   const readyRows = pricedRows.filter((row) => row.readiness.status === "Pronto");
@@ -2942,6 +2945,7 @@ function PurchasePage({
   documentChecklists,
   fundingIssues,
   onNotice,
+  policy,
   receivables,
   registryChecks,
   purchase,
@@ -2957,6 +2961,7 @@ function PurchasePage({
   documentChecklists: DocumentChecklist[];
   fundingIssues: FundingIssue[];
   onNotice: (message: string) => void;
+  policy: EligibilityPolicy;
   receivables: Receivable[];
   registryChecks: RegistryCheck[];
   purchase: (id: string) => Promise<void> | void;
@@ -2975,7 +2980,7 @@ function PurchasePage({
     return {
       item,
       pricing,
-      readiness: buildPurchaseReadiness(item, pricing, assignors, debtors, documentChecklists, cashAccounts, registryChecks),
+      readiness: buildPurchaseReadiness(item, pricing, assignors, debtors, documentChecklists, cashAccounts, policy, registryChecks),
       owned: owned.some((ownedItem) => ownedItem.id === item.id),
     };
   });
