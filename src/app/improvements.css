@@ -174,23 +174,23 @@
 }
 
 .pricing-panel label {
-  color: #aeb4bd;
+  color: var(--muted);
   display: grid;
   font-size: 12px;
   gap: 8px;
 }
 
 .pricing-panel input {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #fffdf7;
+  border: 1px solid var(--line);
   border-radius: 12px;
-  color: #fff;
+  color: var(--ink);
   padding: 11px 12px;
 }
 
 .pricing-summary {
-  background: rgba(6, 8, 10, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #fff8e8;
+  border: 1px solid #e5c783;
   border-radius: 16px;
   display: grid;
   gap: 3px;
@@ -199,12 +199,12 @@
 
 .pricing-summary span,
 .pricing-summary small {
-  color: #aeb4bd;
+  color: var(--muted);
   font-size: 12px;
 }
 
 .pricing-summary b {
-  color: #f4d28b;
+  color: #9a6414;
   font-family: var(--mono);
   font-size: 18px;
 }
@@ -223,8 +223,8 @@
 }
 
 .basket-grid div {
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #fffdf7;
+  border: 1px solid var(--line);
   border-radius: 16px;
   display: grid;
   gap: 5px;
@@ -234,13 +234,13 @@
 .basket-grid span,
 .basket-grid small,
 .basket-actions span {
-  color: #8f969f;
+  color: var(--muted);
   font-size: 10px;
   line-height: 1.4;
 }
 
 .basket-grid b {
-  color: #fff;
+  color: var(--ink);
   font-family: var(--mono);
   font-size: 15px;
 }
