@@ -92,6 +92,7 @@ type PrismaBatch = {
   totalRows: number;
   validRows: number;
   invalidRows: number;
+  validationErrors?: unknown;
   createdAt: Date;
 };
 
@@ -327,6 +328,7 @@ export function mapBatch(item: PrismaBatch): ImportBatch {
     totalRows: item.totalRows,
     validRows: item.validRows,
     invalidRows: item.invalidRows,
+    errors: Array.isArray(item.validationErrors) ? item.validationErrors.map(String) : [],
     createdAt: item.createdAt.toLocaleString("pt-BR", {
       day: "2-digit",
       month: "2-digit",

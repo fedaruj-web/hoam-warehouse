@@ -1970,3 +1970,44 @@ td,
 .notice {
   color: var(--ink);
 }
+
+.error-row td {
+  background: #fff9ed;
+  border-bottom-color: var(--line);
+  border-top: 0;
+  padding: 0 16px 14px;
+}
+
+.import-errors {
+  background: #fffdf7;
+  border: 1px solid #ead6a8;
+  border-radius: 12px;
+  color: var(--ink);
+  margin-top: 2px;
+  padding: 11px 13px;
+}
+
+.import-errors summary {
+  color: #8a5a00;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.import-errors ul {
+  margin: 9px 0 0 18px;
+  padding: 0;
+}
+
+.import-errors li {
+  color: var(--ink-soft);
+  line-height: 1.5;
+  margin: 4px 0;
+}
+
+.file-list {
+  color: var(--ink);
+  display: inline-block;
+  line-height: 1.45;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}

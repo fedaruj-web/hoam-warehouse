@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { type FormEvent, type ReactNode, useMemo, useState } from "react";
+import { Fragment, type FormEvent, type ReactNode, useMemo, useState } from "react";
 import {
   Bell,
   AlertTriangle,
@@ -1252,19 +1252,30 @@ export default function Home() {
     }
   }
 
-  async function importFile(file?: File | null) {
-    if (!requirePermission("Importação", "create", file?.name ?? "arquivo")) return;
-    const fileName = file?.name ?? "modelo_demo.csv";
-    const isTextImport = Boolean(file && /\.(csv|xml)$/i.test(file.name));
-    const isXml = Boolean(file && /\.xml$/i.test(file.name));
-    const content = isTextImport && file ? await file.text() : buildDemoCsv();
+  async function importFile(files?: File[] | null) {
+    const selectedFiles = (files ?? []).filter(Boolean);
+    const sourceFile = selectedFiles.find((item) => /\.(xml|csv)$/i.test(item.name)) ?? selectedFiles[0] ?? null;
+    if (!requirePermission("Importação", "create", sourceFile?.name ?? "arquivo")) return;
+    const fileName = sourceFile?.name ?? "modelo_demo.csv";
+    const isMultipart = selectedFiles.length > 1 || selectedFiles.some((item) => /\.pdf$/i.test(item.name));
+    const isTextImport = Boolean(sourceFile && /\.(csv|xml)$/i.test(sourceFile.name));
+    const isXml = Boolean(sourceFile && /\.xml$/i.test(sourceFile.name));
+    const content = isTextImport && sourceFile ? await sourceFile.text() : buildDemoCsv();
     try {
-      const result = await persistJson<{ batch: ImportBatch; receivables: Receivable[]; debtors?: Debtor[]; errors: string[] }>("/api/import-batches", {
+      const body = isMultipart
+        ? (() => {
+            const form = new FormData();
+            selectedFiles.forEach((item) => form.append("files", item));
+            return form;
+          })()
+        : JSON.stringify({ fileName, content });
+      const result = await persistJson<{ batch: ImportBatch; receivables: Receivable[]; debtors?: Debtor[]; documents?: DocumentRecord[]; errors: string[] }>("/api/import-batches", {
         method: "POST",
-        body: JSON.stringify({ fileName, content }),
+        body,
       });
       setBatches((items) => [result.batch, ...items]);
       setReceivables((items) => [...result.receivables, ...items]);
+      if (result.documents?.length) setDocuments((items) => [...result.documents!, ...items]);
       if (result.debtors?.length) {
         setDebtors((items) => {
           const byId = new Map(items.map((item) => [item.id, item]));
@@ -1273,26 +1284,32 @@ export default function Home() {
         });
       }
       await refreshAudits();
-      if (result.errors.length) setNotice(`Lote importado com ${result.errors.length} inconsistência(s). ${result.debtors?.length ? `${result.debtors.length} sacado(s) extraído(s) do XML.` : ""}`);
-      else setNotice(isXml ? `XML importado com sucesso. ${result.debtors?.length ?? 0} sacado(s) criado(s)/atualizado(s).` : "Lote importado e persistido com sucesso.");
+      const pdfMessage = result.documents?.length ? ` ${result.documents.length} PDF/DANFE anexado(s) como lastro.` : "";
+      if (result.errors.length) setNotice(`Lote importado com ${result.errors.length} inconsistência(s).${pdfMessage} ${result.debtors?.length ? `${result.debtors.length} sacado(s) extraído(s) do XML.` : ""}`);
+      else setNotice(isXml ? `XML importado com sucesso. ${result.debtors?.length ?? 0} sacado(s) criado(s)/atualizado(s).${pdfMessage}` : `Lote importado e persistido com sucesso.${pdfMessage}`);
     } catch {
       const batchId = `LOT-${String(batches.length + 1).padStart(3, "0")}`;
       const parsed = isXml
         ? parseXmlNfeReceivablesForUi(content, batchId)
         : { ...parseCsvReceivables(content, batchId), debtors: [] as Debtor[] };
+      const pdfWarnings = selectedFiles.some((item) => /\.pdf$/i.test(item.name))
+        ? ["PDF/DANFE selecionado, mas só será anexado quando o banco e o storage estiverem disponíveis."]
+        : [];
+      const errors = [...parsed.errors, ...pdfWarnings];
       const batch: ImportBatch = {
         id: batchId,
         fileName,
-        status: parsed.errors.length ? "Com erros" : "Validado",
-        totalRows: parsed.receivables.length + parsed.errors.length,
+        status: errors.length ? "Com erros" : "Validado",
+        totalRows: parsed.receivables.length + errors.length,
         validRows: parsed.receivables.length,
-        invalidRows: parsed.errors.length,
+        invalidRows: errors.length,
+        errors,
         createdAt: now(),
       };
       setBatches((items) => [batch, ...items]);
       setReceivables((items) => [...items, ...parsed.receivables]);
       if (parsed.debtors.length) setDebtors((items) => [...parsed.debtors, ...items]);
-      audit("RECEIVABLE_BATCH_IMPORTED", batch.id, null, { batch, errors: parsed.errors });
+      audit("RECEIVABLE_BATCH_IMPORTED", batch.id, null, { batch, errors });
     }
     setModal(null);
     setView("elegibilidade");
@@ -2715,8 +2732,24 @@ function ImportPage({ batches, receivables, owned }: { batches: ImportBatch[]; r
   return <>
     <Flow />
     <div className="grid">
-      <div className="card"><div className="ctitle">Lotes importados</div><Table heads={["Lote", "Arquivo", "Status", "Linhas", "Válidas", "Erros"]}>{batches.map((b) => <tr key={b.id}><td className="mono">{b.id}</td><td>{b.fileName}</td><td><Badge v={b.status} /></td><td>{b.totalRows}</td><td>{b.validRows}</td><td>{b.invalidRows}</td></tr>)}</Table></div>
-      <div className="card"><div className="ctitle">Modelo esperado</div><div className="note">CSV: <span className="mono">id;cedente;sacado;emissao;vencimento;valor</span><br />XML NF-e: usa <span className="mono">&lt;emit&gt;</span> para localizar o cedente já cadastrado, <span className="mono">&lt;dest&gt;</span> para criar/atualizar o sacado e <span className="mono">&lt;cobr&gt;&lt;dup&gt;</span> para gerar duplicatas.</div></div>
+      <div className="card"><div className="ctitle">Lotes importados</div><Table heads={["Lote", "Arquivo", "Status", "Linhas", "Válidas", "Erros"]}>{batches.map((b) => (
+        <Fragment key={b.id}>
+          <tr><td className="mono">{b.id}</td><td>{b.fileName}</td><td><Badge v={b.status} /></td><td>{b.totalRows}</td><td>{b.validRows}</td><td>{b.invalidRows}</td></tr>
+          {b.errors?.length ? (
+            <tr className="error-row">
+              <td colSpan={6}>
+                <details className="import-errors" open>
+                  <summary>Ver {b.errors.length} erro(s) de importação</summary>
+                  <ul>
+                    {b.errors.map((error, index) => <li key={`${b.id}-error-${index}`}>{error}</li>)}
+                  </ul>
+                </details>
+              </td>
+            </tr>
+          ) : null}
+        </Fragment>
+      ))}</Table></div>
+      <div className="card"><div className="ctitle">Modelo esperado</div><div className="note">CSV: <span className="mono">id;cedente;sacado;emissao;vencimento;valor</span><br />XML NF-e: usa <span className="mono">&lt;emit&gt;</span> para localizar o cedente já cadastrado, <span className="mono">&lt;dest&gt;</span> para criar/atualizar o sacado e <span className="mono">&lt;cobr&gt;&lt;dup&gt;</span> para gerar duplicatas.<br />PDF/DANFE: anexe junto ao XML para salvar em Documentos como lastro da NF-e.</div></div>
     </div>
     <Assets ds={receivables} owned={owned.map((item) => item.id)} />
   </>;
@@ -4783,9 +4816,9 @@ function RegistryManualModal({ close, save, target }: { close: () => void; save:
   );
 }
 
-function Upload({ close, done }: { close: () => void; done: (file?: File | null) => void }) {
-  const [file, setFile] = useState<File | null>(null);
-  return <div className="modalback"><div className="modal"><h2>Importar duplicatas</h2><p className="muted">CSV ou XML NF-e. No XML, o sistema extrai o destinatário como sacado e gera as duplicatas de <span className="mono">&lt;cobr&gt;&lt;dup&gt;</span>.</p><label className="upload"><UploadCloud /><br />{file?.name || "Selecione ou arraste seu arquivo"}<input hidden type="file" accept=".csv,.xml,.xlsx" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label><div className="note">XML exige que o cedente/emitente já esteja cadastrado pelo CNPJ. O sacado/destinatário é criado ou atualizado automaticamente.</div><div className="actions"><button className="btn" onClick={close}>Cancelar</button><button className="btn gold" onClick={() => done(file)}>Validar e importar</button></div></div></div>;
+function Upload({ close, done }: { close: () => void; done: (files?: File[] | null) => void }) {
+  const [files, setFiles] = useState<File[]>([]);
+  return <div className="modalback"><div className="modal"><h2>Importar duplicatas</h2><p className="muted">CSV ou XML NF-e. No XML, o sistema extrai o destinatário como sacado e gera as duplicatas de <span className="mono">&lt;cobr&gt;&lt;dup&gt;</span>.</p><label className="upload"><UploadCloud /><br />{files.length ? <span className="file-list">{files.map((file) => file.name).join(" · ")}</span> : "Selecione XML/CSV e, opcionalmente, PDF/DANFE"}<input hidden multiple type="file" accept=".csv,.xml,.xlsx,.pdf,application/pdf,text/xml,application/xml" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} /></label><div className="note">XML exige que o cedente/emitente já esteja cadastrado pelo CNPJ. O sacado/destinatário é criado ou atualizado automaticamente. Se houver PDF/DANFE, anexe no mesmo upload para registrar o lastro documental.</div><div className="actions"><button className="btn" onClick={close}>Cancelar</button><button className="btn gold" onClick={() => done(files)}>Validar e importar</button></div></div></div>;
 }
 
 function Table({ heads, children }: { heads: string[]; children: ReactNode }) {

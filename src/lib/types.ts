@@ -223,6 +223,7 @@ export type ImportBatch = {
   totalRows: number;
   validRows: number;
   invalidRows: number;
+  errors?: string[];
   createdAt: string;
 };
 

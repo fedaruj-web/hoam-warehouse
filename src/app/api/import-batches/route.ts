@@ -4,8 +4,10 @@ import { parseXmlNfeReceivables, parseXmlNfeReceivablesForUi } from "@/lib/xml-i
 import { batchesSeed } from "@/lib/mock-data";
 import { requirePermission } from "@/server/authz";
 import { getDbOrNull } from "@/server/db";
-import { mapBatch, mapDebtor, mapReceivable } from "@/server/entities";
+import { mapBatch, mapDebtor, mapDocument, mapReceivable } from "@/server/entities";
 import { writeAudit } from "@/server/audit";
+import { DOCUMENT_BUCKET, ensureDocumentBucket, getStorageClient } from "@/server/storage";
+import type { PrismaClient } from "@prisma/client";
 
 function nextBatchCode(count: number) {
   return `LOT-${String(count + 1).padStart(3, "0")}`;
@@ -15,8 +17,50 @@ function nextDebtorCode(count: number) {
   return `SAC-${String(count + 200).padStart(3, "0")}`;
 }
 
+function nextDocumentCode(count: number) {
+  return `DOC-${String(count + 1).padStart(3, "0")}`;
+}
+
 function isXmlImport(fileName: string, content: string) {
   return fileName.toLowerCase().endsWith(".xml") || /^\s*<\?xml|^\s*<(?:[\w.-]+:)?nfeProc\b|^\s*<(?:[\w.-]+:)?NFe\b/i.test(content);
+}
+
+function isFile(value: FormDataEntryValue): value is File {
+  return typeof File !== "undefined" && value instanceof File && value.size > 0;
+}
+
+async function parseImportRequest(request: Request) {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.includes("multipart/form-data")) {
+    const form = await request.formData();
+    const files = form.getAll("files").filter(isFile);
+    const xmlFile = files.find((file) => file.name.toLowerCase().endsWith(".xml"));
+    const csvFile = files.find((file) => file.name.toLowerCase().endsWith(".csv"));
+    const sourceFile = xmlFile ?? csvFile;
+    const pdfFiles = files.filter((file) => file.name.toLowerCase().endsWith(".pdf"));
+    if (!sourceFile) {
+      return {
+        fileName: pdfFiles[0]?.name ?? "arquivo_sem_xml",
+        content: "",
+        pdfFiles,
+        requestErrors: ["Envie um XML NF-e ou CSV junto com o PDF."],
+      };
+    }
+    return {
+      fileName: sourceFile.name,
+      content: await sourceFile.text(),
+      pdfFiles,
+      requestErrors: [] as string[],
+    };
+  }
+
+  const body = await request.json().catch(() => null);
+  return {
+    fileName: String(body?.fileName || "modelo_demo.csv"),
+    content: String(body?.content || buildDemoCsv()),
+    pdfFiles: [] as File[],
+    requestErrors: [] as string[],
+  };
 }
 
 export async function GET() {
@@ -30,19 +74,91 @@ export async function GET() {
   return NextResponse.json(batches.map(mapBatch));
 }
 
+async function attachPdfDocuments({
+  db,
+  files,
+  receivables,
+  userId,
+}: {
+  db: PrismaClient;
+  files: File[];
+  receivables: { id: string; externalId: string }[];
+  userId: string;
+}) {
+  if (!files.length) return { documents: [], errors: [] as string[] };
+  if (!receivables.length) return { documents: [], errors: ["PDF/DANFE não anexado: nenhuma duplicata foi criada no lote."] };
+
+  const storage = getStorageClient();
+  if (!storage) {
+    return {
+      documents: [],
+      errors: ["PDF/DANFE não anexado: storage documental não configurado."],
+    };
+  }
+
+  await ensureDocumentBucket(storage);
+  const documents = [];
+  const errors: string[] = [];
+  let documentCount = await db.document.count();
+
+  for (const receivable of receivables) {
+    for (const file of files) {
+      const code = nextDocumentCode(documentCount++);
+      const safeName = file.name.replace(/[^\w.\-]+/g, "_");
+      const storageKey = `${code}/${Date.now()}-${safeName}`;
+      const bytes = Buffer.from(await file.arrayBuffer());
+      const { error } = await storage.storage.from(DOCUMENT_BUCKET).upload(storageKey, bytes, {
+        contentType: file.type || "application/pdf",
+        upsert: false,
+      });
+
+      if (error) {
+        errors.push(`PDF ${file.name}: ${error.message}`);
+        continue;
+      }
+
+      const document = await db.document.create({
+        data: {
+          code,
+          name: `DANFE / emissão NF-e · ${file.name}`,
+          type: "COLLATERAL",
+          status: "VALID",
+          stage: "Importação",
+          requirement: "COMPROVANTE_LASTRO",
+          storageKey,
+          sizeBytes: file.size,
+          receivableId: receivable.id,
+          uploadedById: userId,
+        },
+        include: { receivable: true, purchase: true },
+      });
+      documents.push(document);
+
+      await writeAudit(db, {
+        action: "NFE_PDF_IMPORTED",
+        entityType: "Document",
+        entityId: document.code,
+        userId,
+        after: { document, receivable: receivable.externalId, bucket: DOCUMENT_BUCKET, storageKey },
+      });
+    }
+  }
+
+  return { documents, errors };
+}
+
 export async function POST(request: Request) {
   const db = getDbOrNull();
   const auth = await requirePermission(db, "Importação", "create");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
-  const body = await request.json().catch(() => null);
-  const fileName = String(body?.fileName || "modelo_demo.csv");
-  const content = String(body?.content || buildDemoCsv());
+  const { fileName, content, pdfFiles, requestErrors } = await parseImportRequest(request);
   const batchCode = nextBatchCode(db ? await db.importBatch.count() : batchesSeed.length);
   const xml = isXmlImport(fileName, content);
   const parsed = xml
     ? parseXmlNfeReceivables(content, batchCode)
     : { ...parseCsvReceivables(content, batchCode), debtors: [] };
+  parsed.errors.push(...requestErrors);
   const totalRows = parsed.receivables.length + parsed.errors.length;
 
   if (!db) {
@@ -55,10 +171,12 @@ export async function POST(request: Request) {
         totalRows,
         validRows: parsed.receivables.length,
         invalidRows: parsed.errors.length,
+        errors: parsed.errors,
         createdAt: new Date().toISOString(),
       },
       receivables: parsed.receivables,
       debtors: uiXml?.debtors ?? [],
+      documents: [],
       errors: parsed.errors,
     });
   }
@@ -197,11 +315,32 @@ export async function POST(request: Request) {
     return { batch, createdReceivables, upsertedDebtors };
   });
 
+  const documentResult = await attachPdfDocuments({
+    db,
+    files: pdfFiles,
+    receivables: result.createdReceivables,
+    userId: auth.user.id,
+  });
+
+  let responseBatch = result.batch;
+  if (documentResult.errors.length) {
+    parsed.errors.push(...documentResult.errors);
+    responseBatch = await db.importBatch.update({
+      where: { id: result.batch.id },
+      data: {
+        status: "Com erros",
+        invalidRows: parsed.errors.length,
+        validationErrors: parsed.errors,
+      },
+    });
+  }
+
   return NextResponse.json(
     {
-      batch: mapBatch(result.batch),
+      batch: mapBatch(responseBatch),
       receivables: result.createdReceivables.map(mapReceivable),
       debtors: result.upsertedDebtors.map(mapDebtor),
+      documents: documentResult.documents.map((document) => mapDocument(document)),
       errors: parsed.errors,
     },
     { status: 201 },
