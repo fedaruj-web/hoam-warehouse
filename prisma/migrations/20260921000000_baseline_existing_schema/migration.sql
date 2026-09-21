@@ -1,0 +1,2 @@
+-- Baseline marker for the schema that predates Prisma migration tracking.
+-- This migration is intentionally empty and is recorded as already applied.

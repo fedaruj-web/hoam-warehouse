@@ -57,6 +57,7 @@ import {
   priceReceivable,
   runEligibility,
 } from "@/lib/domain";
+import { DEFAULT_PDD_POLICY } from "@/lib/pdd";
 import { parseXmlNfeReceivablesForUi } from "@/lib/xml-import";
 import type {
   AccessGroup,
@@ -72,6 +73,8 @@ import type {
   DocumentChecklist,
   FundingIssue,
   EligibilityPolicy,
+  PddOverview,
+  PddPolicy,
   ImportBatch,
   Modal,
   PermissionAction,
@@ -92,6 +95,7 @@ const viewModule: Record<View, string> = {
   confirmacao: "Confirmação",
   elegibilidade: "Elegibilidade",
   risco: "Risco",
+  pdd: "Risco",
   comite: "Comitê",
   compra: "Compra",
   carteira: "Carteira",
@@ -138,6 +142,7 @@ const info: Record<View, [string, string, string]> = {
   confirmacao: ["OPERAÇÕES", "Confirmação de duplicatas", "Registro de aceite, divergência e evidências por ativo"],
   elegibilidade: ["RISCO", "Motor de elegibilidade", "Validação automática conforme políticas vigentes"],
   risco: ["RISCO", "Risco e Covenants", "Concentração, limites, cobertura de funding e alertas da carteira"],
+  pdd: ["RISCO CONTÁBIL", "PDD e perda esperada", "Mensuração mensal, memória de cálculo e governança da provisão"],
   comite: ["GOVERNANÇA", "Comitê de crédito", "Aprovação de exceções, reprovações e solicitações de ajuste"],
   compra: ["OPERAÇÕES", "Compra de ativos", "Formalização e liquidação de direitos creditórios"],
   carteira: ["PORTFÓLIO", "Carteira warehouse", "Posição consolidada dos ativos adquiridos"],
@@ -377,12 +382,18 @@ export default function Home() {
   const [q, setQ] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [eligibilityPolicy, setEligibilityPolicy] = useState<EligibilityPolicy>(DEFAULT_ELIGIBILITY_POLICY);
+  const [pddOverview, setPddOverview] = useState<PddOverview>({
+    policy: DEFAULT_PDD_POLICY,
+    referenceDate: new Date().toISOString().slice(0, 10),
+    calculations: [],
+    summary: { grossExposure: 0, recoverableValue: 0, provisionAmount: 0, netCarryingValue: 0, coveragePct: 0, overdueExposure: 0, affectedByWagon: 0, pendingApproval: 0 },
+  });
   const [annualRate, setAnnualRate] = useState(DEFAULT_ACQUISITION_ANNUAL_RATE * 100);
   const [serviceFeeBps, setServiceFeeBps] = useState(DEFAULT_SERVICE_FEE_BPS);
 
   async function refreshOperationalData() {
     try {
-      const [assignorsRes, debtorsRes, batchesRes, receivablesRes, documentsRes, checklistRes, registryChecksRes, cashAccountsRes, cashMovementsRes, bankStatementRes, fundingRes, auditsRes, usersRes, groupsRes, confirmationLinksRes, cessionOpsRes, eligibilityPolicyRes] = await Promise.all([
+      const [assignorsRes, debtorsRes, batchesRes, receivablesRes, documentsRes, checklistRes, registryChecksRes, cashAccountsRes, cashMovementsRes, bankStatementRes, fundingRes, auditsRes, usersRes, groupsRes, confirmationLinksRes, cessionOpsRes, eligibilityPolicyRes, pddRes] = await Promise.all([
         fetch("/api/assignors"),
         fetch("/api/debtors"),
         fetch("/api/import-batches"),
@@ -400,6 +411,7 @@ export default function Home() {
         fetch("/api/confirmation-links"),
         fetch("/api/cession-operations"),
         fetch("/api/eligibility-policy"),
+        fetch("/api/pdd"),
       ]);
       if (assignorsRes.ok) setAssignors(await assignorsRes.json());
       if (debtorsRes.ok) setDebtors(await debtorsRes.json());
@@ -426,6 +438,7 @@ export default function Home() {
         setAnnualRate(monthlyPercentToAnnualPercent(Number(policy.baseMonthlyRatePercent ?? DEFAULT_ELIGIBILITY_POLICY.baseMonthlyRatePercent) + Number(policy.riskSpreadPercent ?? DEFAULT_ELIGIBILITY_POLICY.riskSpreadPercent)));
         setServiceFeeBps(Number(policy.serviceFeeBps ?? DEFAULT_SERVICE_FEE_BPS));
       }
+      if (pddRes.ok) setPddOverview(await pddRes.json());
     } catch {
       setNotice("Operando com dados demonstrativos locais. Banco indisponível no momento.");
     }
@@ -476,6 +489,7 @@ export default function Home() {
       label: "Gestão",
       items: [
         ["Risco", "risco", TrendingUp],
+        ["PDD e perda esperada", "pdd", BarChart3],
         ["Comitê", "comite", Gavel],
         ["Caixa", "caixa", Landmark],
         ["Funding", "funding", ReceiptText],
@@ -991,6 +1005,39 @@ export default function Home() {
     setServiceFeeBps(persisted.serviceFeeBps);
     await refreshAudits();
     setNotice(`Política de elegibilidade v${persisted.version} salva. Reprocesse o motor para aplicar aos ativos.`);
+  }
+
+  async function calculatePdd(referenceDate: string) {
+    if (!requirePermission("Risco", "create", referenceDate)) return;
+    const overview = await persistJson<PddOverview>("/api/pdd", {
+      method: "POST",
+      body: JSON.stringify({ referenceDate }),
+    });
+    setPddOverview(overview);
+    await refreshAudits();
+    setNotice(`PDD calculada para ${new Date(`${overview.referenceDate}T12:00:00`).toLocaleDateString("pt-BR")}: ${fmt(overview.summary.provisionAmount)} provisionados.`);
+  }
+
+  async function savePddPolicy(policy: PddPolicy) {
+    if (!requirePermission("Risco", "approve", policy.code)) return;
+    const overview = await persistJson<PddOverview>("/api/pdd", {
+      method: "PUT",
+      body: JSON.stringify(policy),
+    });
+    setPddOverview(overview);
+    await refreshAudits();
+    setNotice(`Política de PDD v${overview.policy.version} publicada. Recalcule a competência para aplicar as novas premissas.`);
+  }
+
+  async function approvePdd(referenceDate: string) {
+    if (!requirePermission("Risco", "approve", referenceDate)) return;
+    const overview = await persistJson<PddOverview>("/api/pdd", {
+      method: "PATCH",
+      body: JSON.stringify({ referenceDate }),
+    });
+    setPddOverview(overview);
+    await refreshAudits();
+    setNotice(`PDD da competência ${new Date(`${referenceDate}T12:00:00`).toLocaleDateString("pt-BR")} aprovada e auditada.`);
   }
 
   async function updateReceivableConfirmation(e: FormEvent<HTMLFormElement>) {
@@ -1623,6 +1670,17 @@ export default function Home() {
           )}
           {view === "elegibilidade" && <EligibilityPage key={`${eligibilityPolicy.version}-${eligibilityPolicy.effectiveAt}`} policy={eligibilityPolicy} receivables={activeReceivables} owned={owned} runRules={runRules} savePolicy={saveEligibilityPolicy} />}
           {view === "risco" && <RiskCovenantsPage assignors={assignors} debtors={debtors} fundingIssues={fundingIssues} receivables={activeReceivables} />}
+          {view === "pdd" && (
+            <PddPage
+              key={`${pddOverview.policy.version}-${pddOverview.referenceDate}`}
+              canApprove={can("Risco", "approve")}
+              canCalculate={can("Risco", "create")}
+              onApprove={approvePdd}
+              onCalculate={calculatePdd}
+              onSavePolicy={savePddPolicy}
+              overview={pddOverview}
+            />
+          )}
           {view === "comite" && <CommitteePage receivables={activeReceivables} onDecide={(item) => { setCommitteeReceivable(item); setModal("comite"); }} />}
           {view === "compra" && (
             <PurchasePage
@@ -3364,6 +3422,123 @@ function PurchasePage({
       </div>
     </>
   );
+}
+
+function PddPage({
+  overview,
+  canCalculate,
+  canApprove,
+  onCalculate,
+  onSavePolicy,
+  onApprove,
+}: {
+  overview: PddOverview;
+  canCalculate: boolean;
+  canApprove: boolean;
+  onCalculate: (referenceDate: string) => Promise<void>;
+  onSavePolicy: (policy: PddPolicy) => Promise<void>;
+  onApprove: (referenceDate: string) => Promise<void>;
+}) {
+  const [referenceDate, setReferenceDate] = useState(overview.referenceDate);
+  const [saving, setSaving] = useState(false);
+  const policy = overview.policy;
+  const pct = (value: number) => `${value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+
+  async function submitPolicy(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const bands = policy.delinquencyBands.map((band, index) => ({
+      ...band,
+      ratePct: Number(String(form.get(`band-${index}`) ?? band.ratePct).replace(",", ".")),
+    }));
+    const updated: PddPolicy = {
+      ...policy,
+      name: String(form.get("name") ?? policy.name),
+      portfolioType: String(form.get("portfolioType") ?? policy.portfolioType) as PddPolicy["portfolioType"],
+      defaultCollateralHaircutPct: Number(String(form.get("defaultCollateralHaircutPct") ?? policy.defaultCollateralHaircutPct).replace(",", ".")),
+      recoveryCostPct: Number(String(form.get("recoveryCostPct") ?? policy.recoveryCostPct).replace(",", ".")),
+      wagonEffectMode: String(form.get("wagonEffectMode") ?? policy.wagonEffectMode) as PddPolicy["wagonEffectMode"],
+      wagonEffectPct: Number(String(form.get("wagonEffectPct") ?? policy.wagonEffectPct).replace(",", ".")),
+      concentrationThresholdPct: Number(String(form.get("concentrationThresholdPct") ?? policy.concentrationThresholdPct).replace(",", ".")),
+      concentratedAdjustmentPct: Number(String(form.get("concentratedAdjustmentPct") ?? policy.concentratedAdjustmentPct).replace(",", ".")),
+      renegotiationAdjustmentPct: Number(String(form.get("renegotiationAdjustmentPct") ?? policy.renegotiationAdjustmentPct).replace(",", ".")),
+      delinquencyBands: bands,
+    };
+    setSaving(true);
+    try { await onSavePolicy(updated); } finally { setSaving(false); }
+  }
+
+  async function recalculate() {
+    setSaving(true);
+    try { await onCalculate(referenceDate); } finally { setSaving(false); }
+  }
+
+  async function approve() {
+    setSaving(true);
+    try { await onApprove(overview.referenceDate); } finally { setSaving(false); }
+  }
+
+  return <>
+    <div className="kpis">
+      <K label="Exposição bruta" v={fmt(overview.summary.grossExposure)} />
+      <K label="PDD constituída" v={fmt(overview.summary.provisionAmount)} />
+      <K label="Valor líquido esperado" v={fmt(overview.summary.netCarryingValue)} />
+      <K label="Cobertura da carteira" v={pct(overview.summary.coveragePct)} />
+    </div>
+
+    <div className="pdd-principles">
+      <div><b>Perda esperada</b><span>Combina atraso e sinais prospectivos ao longo da vida do ativo.</span></div>
+      <div><b>Apuração pelo ativo</b><span>Subordinação e fundo de reserva não reduzem automaticamente a PDD.</span></div>
+      <div><b>Garantia recuperável</b><span>Redutores exigem valor econômico, haircut, liquidez e exequibilidade.</span></div>
+      <div><b>Efeito vagão</b><span>Propaga risco correlacionado do mesmo sacado de forma parametrizada e rastreável.</span></div>
+    </div>
+
+    <form className="card pdd-policy" onSubmit={submitPolicy}>
+      <div className="ctitle pdd-title-row">
+        <div><b>Política vigente · v{policy.version}</b><span>Premissas versionadas e aplicadas uniformemente a ativos comparáveis.</span></div>
+        <Badge v="Ativa" />
+      </div>
+      <div className="pdd-policy-grid">
+        <label><span>Nome da política</span><input name="name" defaultValue={policy.name} /></label>
+        <label><span>Tipo de carteira</span><select name="portfolioType" defaultValue={policy.portfolioType}><option value="PULVERIZED_UNSECURED">Pulverizada sem garantia real</option><option value="PULVERIZED_COLLATERAL_ORIGIN">Pulverizada com AF na origem</option><option value="PULVERIZED_COLLATERAL_CESSION">Pulverizada com AF na cessão</option><option value="CONCENTRATED">Concentrada / corporativa</option></select></label>
+        <label><span>Haircut padrão da garantia (%)</span><input name="defaultCollateralHaircutPct" type="number" min="0" max="100" step="0.01" defaultValue={policy.defaultCollateralHaircutPct} /></label>
+        <label><span>Custos de recuperação (%)</span><input name="recoveryCostPct" type="number" min="0" max="100" step="0.01" defaultValue={policy.recoveryCostPct} /></label>
+        <label><span>Efeito vagão</span><select name="wagonEffectMode" defaultValue={policy.wagonEffectMode}><option value="NONE">Não aplicar</option><option value="PARTIAL">Parcial / graduado</option><option value="FULL">Integral</option></select></label>
+        <label><span>Intensidade do efeito vagão (%)</span><input name="wagonEffectPct" type="number" min="0" max="100" step="0.01" defaultValue={policy.wagonEffectPct} /></label>
+        <label><span>Limite de concentração (%)</span><input name="concentrationThresholdPct" type="number" min="0" max="100" step="0.01" defaultValue={policy.concentrationThresholdPct} /></label>
+        <label><span>Ajuste por concentração (p.p.)</span><input name="concentratedAdjustmentPct" type="number" min="0" max="100" step="0.01" defaultValue={policy.concentratedAdjustmentPct} /></label>
+        <label><span>Ajuste por renegociação (p.p.)</span><input name="renegotiationAdjustmentPct" type="number" min="0" max="100" step="0.01" defaultValue={policy.renegotiationAdjustmentPct} /></label>
+      </div>
+      <div className="pdd-bands">
+        <div className="sub">Régua de atraso e percentuais de provisão</div>
+        {policy.delinquencyBands.map((band, index) => <label key={`${band.fromDays}-${band.toDays}`}><span>{band.fromDays} a {band.toDays ?? "∞"} dias</span><input name={`band-${index}`} type="number" min="0" max="100" step="0.01" defaultValue={band.ratePct} /><small>%</small></label>)}
+      </div>
+      <div className="actions"><button className="btn gold" disabled={!canApprove || saving}>{saving ? "Processando..." : "Publicar nova versão"}</button></div>
+    </form>
+
+    <div className="card">
+      <div className="ctitle pdd-title-row">
+        <div><b>Memória de cálculo · {new Date(`${overview.referenceDate}T12:00:00`).toLocaleDateString("pt-BR")}</b><span>Mensuração reproduzível por ativo, com snapshot das premissas.</span></div>
+        <div className="pdd-actions"><input aria-label="Data de referência" type="date" value={referenceDate} onChange={(event) => setReferenceDate(event.target.value)} /><button className="btn" disabled={!canCalculate || saving} onClick={recalculate} type="button">Calcular competência</button><button className="btn gold" disabled={!canApprove || saving || !overview.calculations.length || overview.summary.pendingApproval === 0} onClick={approve} type="button">Aprovar PDD</button></div>
+      </div>
+      <div className="pdd-summary-strip">
+        <div><span>Exposição vencida</span><b>{fmt(overview.summary.overdueExposure)}</b></div>
+        <div><span>Valor recuperável</span><b>{fmt(overview.summary.recoverableValue)}</b></div>
+        <div><span>Impactados pelo efeito vagão</span><b>{overview.summary.affectedByWagon}</b></div>
+        <div><span>Pendentes de aprovação</span><b>{overview.summary.pendingApproval}</b></div>
+      </div>
+      <Table heads={["Ativo", "Cedente / Sacado", "Vencimento", "Atraso", "Exposição", "Taxa base", "Ajustes", "Taxa final", "PDD", "Status / racional"]}>
+        {overview.calculations.map((item) => <tr key={item.id}><td className="mono">{item.externalId}</td><td><div className="entity">{item.assignorName}</div><div className="sub">{item.debtorName}</div></td><td>{new Date(`${item.dueDate}T12:00:00`).toLocaleDateString("pt-BR")}</td><td>{item.daysPastDue} dia(s)</td><td>{fmt(item.grossExposure)}</td><td>{pct(item.baseProvisionRatePct)}</td><td><div>{pct(item.qualitativeAdjustmentPct)} qualitativo</div><div className="sub">{pct(item.wagonAdjustmentPct)} vagão</div></td><td><b>{pct(item.finalProvisionRatePct)}</b></td><td><b>{fmt(item.provisionAmount)}</b></td><td><Badge v={item.status} /><div className="sub pdd-rationale">{item.rationale}</div></td></tr>)}
+      </Table>
+      {!overview.calculations.length && <div className="note">Ainda não há memória de cálculo. Selecione a data de referência e execute “Calcular competência”.</div>}
+    </div>
+
+    <div className="card">
+      <div className="ctitle">Gatilhos qualitativos monitorados</div>
+      <div className="pdd-triggers">{policy.qualitativeTriggers.map((trigger) => <div key={trigger}><AlertTriangle size={15} /><span>{trigger}</span></div>)}</div>
+      <div className="note">A política é uma melhor prática interna parametrizável. Os percentuais devem ser aprovados pela governança da HOAM e revisados, no mínimo, mensalmente.</div>
+    </div>
+  </>;
 }
 
 function PortfolioPage({ owned, softDelete, canDelete }: { receivables: Receivable[]; owned: Receivable[]; softDelete: (id: string) => void; canDelete: boolean }) {

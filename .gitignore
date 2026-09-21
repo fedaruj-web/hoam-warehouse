@@ -23,3 +23,5 @@ vercel-auth-cookies.txt
 .agents/
 outputs/
 work/
+tmp/
+*.tsbuildinfo

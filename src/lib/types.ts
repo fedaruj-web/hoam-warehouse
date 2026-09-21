@@ -9,6 +9,7 @@
   | "confirmacao"
   | "elegibilidade"
   | "risco"
+  | "pdd"
   | "comite"
   | "compra"
   | "carteira"
@@ -198,6 +199,79 @@ export type EligibilityPolicy = {
   baseMonthlyRatePercent: number;
   riskSpreadPercent: number;
   serviceFeeBps: number;
+};
+
+export type PddPortfolioType =
+  | "PULVERIZED_UNSECURED"
+  | "PULVERIZED_COLLATERAL_ORIGIN"
+  | "PULVERIZED_COLLATERAL_CESSION"
+  | "CONCENTRATED";
+
+export type PddWagonEffectMode = "NONE" | "PARTIAL" | "FULL";
+
+export type PddBand = {
+  fromDays: number;
+  toDays: number | null;
+  ratePct: number;
+};
+
+export type PddPolicy = {
+  id?: string;
+  code: string;
+  name: string;
+  version: number;
+  effectiveAt: string;
+  reviewFrequency: string;
+  portfolioType: PddPortfolioType;
+  method: string;
+  delinquencyBands: PddBand[];
+  defaultCollateralHaircutPct: number;
+  recoveryCostPct: number;
+  wagonEffectMode: PddWagonEffectMode;
+  wagonEffectPct: number;
+  concentrationThresholdPct: number;
+  concentratedAdjustmentPct: number;
+  renegotiationAdjustmentPct: number;
+  qualitativeTriggers: string[];
+};
+
+export type PddCalculation = {
+  id: string;
+  receivableId: string;
+  externalId: string;
+  assignorName: string;
+  debtorName: string;
+  referenceDate: string;
+  dueDate: string;
+  daysPastDue: number;
+  grossExposure: number;
+  recoverableValue: number;
+  baseLoss: number;
+  baseProvisionRatePct: number;
+  qualitativeAdjustmentPct: number;
+  wagonAdjustmentPct: number;
+  finalProvisionRatePct: number;
+  provisionAmount: number;
+  status: string;
+  rationale?: string | null;
+  policyVersion: number;
+  inputSnapshot?: Record<string, unknown>;
+};
+
+export type PddOverview = {
+  policy: PddPolicy;
+  referenceDate: string;
+  calculations: PddCalculation[];
+  summary: {
+    grossExposure: number;
+    recoverableValue: number;
+    provisionAmount: number;
+    netCarryingValue: number;
+    coveragePct: number;
+    overdueExposure: number;
+    affectedByWagon: number;
+    pendingApproval: number;
+  };
 };
 
 export type AcquisitionPricing = {
