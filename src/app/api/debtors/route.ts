@@ -5,6 +5,7 @@ import { writeAudit } from "@/server/audit";
 import { requirePermission } from "@/server/authz";
 import { getDbOrNull } from "@/server/db";
 import { mapDebtor, toPrismaStatus } from "@/server/entities";
+import { createAutomaticRegistryCheck } from "@/server/registry";
 
 function nextDebtorCode(count: number) {
   return `SAC-${String(count + 200).padStart(3, "0")}`;
@@ -112,6 +113,13 @@ export async function POST(request: Request) {
     userId: auth.user.id,
     after: created,
   });
+
+  await createAutomaticRegistryCheck(db, {
+    entityType: "Debtor",
+    entityId: created.code,
+    documentNumber: created.taxId,
+    declaredName: created.legalName,
+  }, auth.user.id);
 
   return NextResponse.json(mapDebtor(created), { status: 201 });
 }

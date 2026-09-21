@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { Fragment, type FormEvent, type ReactNode, useMemo, useState } from "react";
+import { Fragment, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   AlertTriangle,
@@ -247,13 +247,13 @@ function buildPurchaseReadiness(
     },
     {
       label: "Receita cedente",
-      passed: Boolean(assignorRegistry) && assignorRegistry?.status !== "Bloqueado" && assignorRegistry?.status !== "Erro",
+      passed: assignorRegistry?.status === "Regular",
       critical: assignorRegistry?.status === "Bloqueado",
       detail: registryCheckSummary(assignorRegistry, "Sem consulta Receita/Serpro para o cedente"),
     },
     {
       label: "Receita sacado",
-      passed: Boolean(debtorRegistry) && debtorRegistry?.status !== "Bloqueado" && debtorRegistry?.status !== "Erro",
+      passed: debtorRegistry?.status === "Regular",
       critical: debtorRegistry?.status === "Bloqueado",
       detail: registryCheckSummary(debtorRegistry, "Sem consulta Receita/Serpro para o sacado"),
     },
@@ -390,6 +390,27 @@ export default function Home() {
   });
   const [annualRate, setAnnualRate] = useState(DEFAULT_ACQUISITION_ANNUAL_RATE * 100);
   const [serviceFeeBps, setServiceFeeBps] = useState(DEFAULT_SERVICE_FEE_BPS);
+  const registryAutomationStarted = useRef(false);
+
+  useEffect(() => {
+    if (!auth || view !== "sacados" || registryAutomationStarted.current) return;
+    registryAutomationStarted.current = true;
+    void fetch("/api/registry-checks", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entityType: "Debtor" }),
+    })
+      .then(async (response) => response.ok ? response.json() as Promise<RegistryCheck[]> : [])
+      .then((checks) => {
+        if (!checks.length) return;
+        setRegistryChecks((current) => {
+          const byId = new Map(current.map((check) => [check.id, check]));
+          checks.forEach((check) => byId.set(check.id, check));
+          return [...byId.values()].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+        });
+      })
+      .catch(() => undefined);
+  }, [auth, view]);
 
   async function refreshOperationalData() {
     try {
@@ -1610,7 +1631,7 @@ export default function Home() {
                   return (
                     <tr key={item.id}>
                       <td className="mono">{item.id}</td>
-                      <td>
+                      <td className="debtor-name-cell">
                         <button className="linkish" onClick={() => openDebtorDetail(item)}>{item.nome}</button>
                         <div className="sub">{item.doc} · {item.cidade || "Cidade não informada"}{item.uf ? `/${item.uf}` : ""}</div>
                       </td>
@@ -1842,7 +1863,7 @@ function assignorDetailRows(item: Assignor): [string, string][] {
 
 function debtorDetailRows(item: Debtor): [string, string][] {
   return [
-    ["CNPJ", item.doc],
+    ["CPF/CNPJ", item.doc],
     ["Nome fantasia", item.nomeFantasia || "Não informado"],
     ["Rating", item.rating],
     ["Exposição", fmt(item.valor)],
@@ -4596,7 +4617,7 @@ function DebtorModal({
         <div className="formgrid">
           <Field label="Razão social" name="nome" value={initial?.nome} />
           <Field label="Nome fantasia" name="nomeFantasia" value={initial?.nomeFantasia ?? ""} required={false} />
-          <Field label="CNPJ" name="doc" value={initial?.doc} />
+          <Field label="CPF/CNPJ" name="doc" value={initial?.doc} />
           <Field label="Rating" name="extra" value={initial?.rating} />
           <Field label="Exposição / limite" name="valor" value={String(initial?.valor ?? "")} type="number" />
           <Field label="Website" name="site" value={initial?.site ?? ""} required={false} />

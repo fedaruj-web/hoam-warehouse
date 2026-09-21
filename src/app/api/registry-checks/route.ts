@@ -7,6 +7,7 @@ import { DOCUMENT_BUCKET, ensureDocumentBucket, getStorageClient } from "@/serve
 import {
   compareRegistryName,
   consultOfficialRegistry,
+  createAutomaticRegistryCheck,
   documentTypeFor,
   evaluateManualRegistryCheck,
   mapRegistryCheck,
@@ -168,6 +169,37 @@ export async function GET() {
     orderBy: { createdAt: "desc" },
     take: 500,
   });
+
+  return NextResponse.json(checks.map(mapRegistryCheck));
+}
+
+export async function PUT(request: Request) {
+  const body = (await request.json().catch(() => null)) as { entityType?: "Assignor" | "Debtor" } | null;
+  const entityType = body?.entityType ?? "Debtor";
+  const db = getDbOrNull();
+  const auth = await requirePermission(db, moduleFor(entityType), "create");
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (!db) return NextResponse.json({ error: "Banco de dados indisponível para automatizar as consultas." }, { status: 503 });
+
+  const subjects = entityType === "Debtor"
+    ? (await db.debtor.findMany({ where: { deletedAt: null }, orderBy: { code: "asc" } })).map((item) => ({
+        entityType: "Debtor" as const,
+        entityId: item.code,
+        documentNumber: item.taxId,
+        declaredName: item.legalName,
+      }))
+    : (await db.assignor.findMany({ where: { deletedAt: null }, orderBy: { code: "asc" } })).map((item) => ({
+        entityType: "Assignor" as const,
+        entityId: item.code,
+        documentNumber: item.taxId,
+        declaredName: item.legalName,
+      }));
+
+  const checks = [];
+  for (let index = 0; index < subjects.length; index += 4) {
+    const chunk = subjects.slice(index, index + 4);
+    checks.push(...(await Promise.all(chunk.map((subject) => createAutomaticRegistryCheck(db, subject, auth.user.id)))));
+  }
 
   return NextResponse.json(checks.map(mapRegistryCheck));
 }

@@ -7,6 +7,7 @@ import { getDbOrNull } from "@/server/db";
 import { mapBatch, mapDebtor, mapDocument, mapReceivable } from "@/server/entities";
 import { writeAudit } from "@/server/audit";
 import { DOCUMENT_BUCKET, ensureDocumentBucket, getStorageClient } from "@/server/storage";
+import { createAutomaticRegistryCheck } from "@/server/registry";
 import type { PrismaClient } from "@prisma/client";
 
 function compactTaxId(value?: string | null) {
@@ -328,6 +329,13 @@ export async function POST(request: Request) {
 
     return { batch, createdReceivables, upsertedDebtors };
   });
+
+  await Promise.allSettled(result.upsertedDebtors.map((debtor) => createAutomaticRegistryCheck(db, {
+    entityType: "Debtor",
+    entityId: debtor.code,
+    documentNumber: debtor.taxId,
+    declaredName: debtor.legalName,
+  }, auth.user.id)));
 
   const documentResult = await attachPdfDocuments({
     db,

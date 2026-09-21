@@ -67,10 +67,31 @@ export function onlyDigits(value: string) {
 
 export function isValidCnpj(value: string) {
   const digits = onlyDigits(value);
-  return digits.length === 14 && !/^(\d)\1+$/.test(digits);
+  if (digits.length !== 14 || /^(\d)\1+$/.test(digits)) return false;
+  const calculateDigit = (base: string, weights: number[]) => {
+    const sum = base.split("").reduce((total, digit, index) => total + Number(digit) * weights[index], 0);
+    const remainder = sum % 11;
+    return remainder < 2 ? 0 : 11 - remainder;
+  };
+  const first = calculateDigit(digits.slice(0, 12), [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+  const second = calculateDigit(digits.slice(0, 12) + first, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+  return digits.endsWith(`${first}${second}`);
 }
 
-export function parseEntityInput(input: unknown): { data?: EntityInput; error?: string } {
+export function isValidCpf(value: string) {
+  const digits = onlyDigits(value);
+  if (digits.length !== 11 || /^(\d)\1+$/.test(digits)) return false;
+  const calculateDigit = (base: string, factor: number) => {
+    const total = base.split("").reduce((sum, digit) => sum + Number(digit) * factor--, 0);
+    const remainder = (total * 10) % 11;
+    return remainder === 10 ? 0 : remainder;
+  };
+  const first = calculateDigit(digits.slice(0, 9), 10);
+  const second = calculateDigit(digits.slice(0, 9) + first, 11);
+  return digits.endsWith(`${first}${second}`);
+}
+
+export function parseEntityInput(input: unknown, documentMode: "CNPJ" | "CPF_CNPJ" = "CNPJ"): { data?: EntityInput; error?: string } {
   const record = input as Partial<Record<keyof EntityInput, unknown>>;
   const nome = String(record.nome ?? "").trim();
   const doc = String(record.doc ?? "").trim();
@@ -79,8 +100,9 @@ export function parseEntityInput(input: unknown): { data?: EntityInput; error?: 
   const status = String(record.status ?? "Ativo") as EntityStatus;
 
   if (nome.length < 3) return { error: "Razão social deve ter ao menos 3 caracteres." };
-  if (!doc) return { error: "CNPJ é obrigatório." };
-  if (!isValidCnpj(doc)) return { error: "CNPJ inválido." };
+  if (!doc) return { error: documentMode === "CPF_CNPJ" ? "CPF/CNPJ é obrigatório." : "CNPJ é obrigatório." };
+  const validDocument = documentMode === "CPF_CNPJ" ? isValidCpf(doc) || isValidCnpj(doc) : isValidCnpj(doc);
+  if (!validDocument) return { error: documentMode === "CPF_CNPJ" ? "CPF/CNPJ inválido." : "CNPJ inválido." };
   if (!extra) return { error: "Campo complementar é obrigatório." };
   if (!Number.isFinite(valor) || valor < 0) return { error: "Valor deve ser maior ou igual a zero." };
   if (!statuses.includes(status as (typeof statuses)[number])) return { error: "Status inválido." };
@@ -163,7 +185,7 @@ export function parseAssignorInput(input: unknown): { data?: AssignorInput; erro
   };
 }
 export function parseDebtorInput(input: unknown): { data?: DebtorInput; error?: string } {
-  const base = parseEntityInput(input);
+  const base = parseEntityInput(input, "CPF_CNPJ");
   if (base.error || !base.data) return base;
   const record = input as Record<string, unknown>;
 

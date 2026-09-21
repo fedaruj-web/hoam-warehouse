@@ -1,8 +1,11 @@
+import type { Prisma, PrismaClient } from "@prisma/client";
 import type { RegistryCheck } from "@/lib/types";
+import { isValidCnpj, isValidCpf } from "@/lib/validation";
+import { writeAudit } from "@/server/audit";
 
 type RegistryEntityType = "Assignor" | "Debtor" | "Representative" | "BeneficialOwner";
 
-type RegistrySubject = {
+export type RegistrySubject = {
   entityType: RegistryEntityType;
   entityId: string;
   declaredName: string;
@@ -103,6 +106,74 @@ function pickString(value: unknown, paths: string[][]): string | null {
   return null;
 }
 
+async function consultPublicCnpj(subject: RegistrySubject): Promise<RegistryProviderResult> {
+  const documentNumber = onlyDigits(subject.documentNumber);
+  if (!isValidCnpj(documentNumber)) {
+    return {
+      provider: "VALIDACAO_LOCAL",
+      status: "Bloqueado",
+      registryStatus: "CNPJ inválido",
+      registryName: null,
+      nameMatch: null,
+      checkedAt: new Date(),
+      expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24),
+      raw: { reason: "invalid_cnpj_checksum" },
+      notes: "CNPJ reprovado na validação dos dígitos verificadores.",
+    };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${documentNumber}`, {
+      headers: { Accept: "application/json", "User-Agent": "HOAM-Warehouse/1.0" },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      return {
+        provider: "BRASILAPI",
+        status: response.status === 404 ? "Atenção" : "Erro",
+        checkedAt: new Date(),
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24),
+        raw: payload ?? { status: response.status },
+        notes: `Triagem pública de CNPJ retornou HTTP ${response.status}. A validação oficial SERPRO continua obrigatória.`,
+      };
+    }
+
+    const registryStatus = pickString(payload, [["descricao_situacao_cadastral"], ["situacao_cadastral"]]);
+    const registryName = pickString(payload, [["razao_social"], ["nome_fantasia"]]);
+    const nameMatch = compareRegistryName(subject.declaredName, registryName);
+    const evaluated = evaluateStatus("CNPJ", registryStatus, nameMatch);
+    return {
+      provider: "BRASILAPI",
+      status: evaluated === "Bloqueado" ? "Bloqueado" : "Atenção",
+      registryStatus,
+      registryName,
+      nameMatch,
+      checkedAt: new Date(),
+      expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7),
+      evidenceSource: `https://brasilapi.com.br/api/cnpj/v1/${documentNumber}`,
+      raw: { payload, sourceClass: "public_screening" },
+      notes: evaluated === "Bloqueado"
+        ? "Situação impeditiva encontrada na triagem pública. Exige bloqueio e confirmação na base oficial."
+        : "Triagem automática em dados públicos concluída. Não substitui a validação oficial Receita/SERPRO.",
+    };
+  } catch (error) {
+    return {
+      provider: "BRASILAPI",
+      status: "Erro",
+      checkedAt: new Date(),
+      expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 6),
+      raw: { reason: error instanceof Error ? error.message : "public_cnpj_lookup_failed" },
+      notes: "Não foi possível concluir a triagem automática de CNPJ. Tente novamente ou registre evidência oficial manual.",
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function consultOfficialRegistry(subject: RegistrySubject): Promise<RegistryProviderResult> {
   const documentType = documentTypeFor(subject.documentNumber);
   const baseUrl =
@@ -114,6 +185,23 @@ export async function consultOfficialRegistry(subject: RegistrySubject): Promise
   const token = process.env.SERPRO_ACCESS_TOKEN;
 
   if (!baseUrl || !token || documentType === "Documento") {
+    if (documentType === "CNPJ") return consultPublicCnpj(subject);
+    if (documentType === "CPF") {
+      const valid = isValidCpf(subject.documentNumber);
+      return {
+        provider: "VALIDACAO_LOCAL",
+        status: valid ? "Pendente" : "Bloqueado",
+        registryStatus: valid ? "CPF estruturalmente válido" : "CPF inválido",
+        registryName: null,
+        nameMatch: null,
+        checkedAt: new Date(),
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7),
+        raw: { reason: valid ? "serpro_credentials_required" : "invalid_cpf_checksum", documentType },
+        notes: valid
+          ? "CPF validado estruturalmente. Situação cadastral e eventual titular falecido exigem a API oficial SERPRO/Receita."
+          : "CPF reprovado na validação dos dígitos verificadores.",
+      };
+    }
     return {
       provider: "UNCONFIGURED",
       status: "Pendente",
@@ -169,6 +257,72 @@ export async function consultOfficialRegistry(subject: RegistrySubject): Promise
     raw: { payload, nameMatch },
     notes: nameMatch === false ? "Nome cadastrado diverge do nome retornado pela base oficial." : null,
   };
+}
+
+type RegistryDb = PrismaClient | Prisma.TransactionClient;
+
+export async function createAutomaticRegistryCheck(
+  db: RegistryDb,
+  subject: RegistrySubject,
+  userId?: string | null,
+  options: { force?: boolean } = {},
+) {
+  const now = new Date();
+  if (!options.force) {
+    const fresh = await db.registryCheck.findFirst({
+      where: {
+        entityType: subject.entityType,
+        entityId: subject.entityId,
+        deletedAt: null,
+        expiresAt: { gt: now },
+        provider: { not: "UNCONFIGURED" },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    if (fresh) return fresh;
+  }
+
+  const result = await consultOfficialRegistry(subject);
+  const check = await db.registryCheck.create({
+    data: {
+      entityType: subject.entityType,
+      entityId: subject.entityId,
+      documentType: documentTypeFor(subject.documentNumber),
+      documentNumber: onlyDigits(subject.documentNumber),
+      provider: result.provider,
+      status: result.status,
+      registryStatus: result.registryStatus,
+      registryName: result.registryName,
+      declaredName: subject.declaredName,
+      nameMatch: result.nameMatch ?? compareRegistryName(subject.declaredName, result.registryName),
+      checkedAt: result.checkedAt ?? undefined,
+      expiresAt: result.expiresAt ?? undefined,
+      evidenceSource: result.evidenceSource,
+      evidenceDocumentId: result.evidenceDocumentId,
+      raw: result.raw as Prisma.InputJsonValue,
+      notes: result.notes,
+      createdById: userId ?? undefined,
+    },
+  });
+
+  await writeAudit(db, {
+    action: "REGISTRY_CHECK_AUTOMATED",
+    entityType: subject.entityType,
+    entityId: subject.entityId,
+    userId,
+    after: {
+      id: check.id,
+      documentType: check.documentType,
+      provider: check.provider,
+      status: check.status,
+      registryStatus: check.registryStatus,
+      nameMatch: check.nameMatch,
+      checkedAt: check.checkedAt,
+      expiresAt: check.expiresAt,
+    },
+  });
+
+  return check;
 }
 
 export function mapRegistryCheck(item: {

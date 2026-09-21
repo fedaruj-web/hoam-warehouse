@@ -1615,6 +1615,32 @@ body {
   color: var(--ink);
 }
 
+.linkish {
+  color: var(--ink);
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.linkish:hover {
+  color: var(--gold-strong);
+}
+
+.debtor-name-cell {
+  min-width: 240px;
+  max-width: 340px;
+}
+
+.debtor-name-cell .linkish {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.debtor-name-cell .sub {
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .side small,
 .navlabel,
 .top span,

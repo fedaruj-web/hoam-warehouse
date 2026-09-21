@@ -6,6 +6,7 @@ import { writeAudit } from "@/server/audit";
 import { requirePermission } from "@/server/authz";
 import { getDbOrNull } from "@/server/db";
 import { mapAssignor, toPrismaStatus } from "@/server/entities";
+import { createAutomaticRegistryCheck } from "@/server/registry";
 
 function nextAssignorCode(count: number) {
   return `CED-${String(count + 1).padStart(3, "0")}`;
@@ -115,6 +116,13 @@ export async function POST(request: Request) {
     userId: auth.user.id,
     after: created,
   });
+
+  await createAutomaticRegistryCheck(db, {
+    entityType: "Assignor",
+    entityId: created.code,
+    documentNumber: created.taxId,
+    declaredName: created.legalName,
+  }, auth.user.id);
 
   return NextResponse.json(mapAssignor(created), { status: 201 });
 }
